@@ -1,3 +1,4 @@
+require "kifu-tools/blank"
 require "kifu-tools/color"
 require "kifu-tools/helper"
 

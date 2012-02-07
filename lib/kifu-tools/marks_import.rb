@@ -6,11 +6,13 @@ module Kifu
 
     class MarksImport
       
-      def initialize(config, folder)
+      def initialize(config, folder, dest)
         raise "[#{config}] is not found" unless File.exists?(config)
         raise "[#{folder}] is not a directory path" unless File.directory?(folder)
         raise "[#{folder}] does not contain MARKS files" unless File.exists?("#{folder}/ESWSLNK1.DBF")
+        Dir.mkdir(dest) unless File.directory?(dest)
         @folder = Dir.new(folder)
+        @dest = Dir.new(dest)
         @config = JSON.parse(IO.read(config))
         
         @tags = {}
@@ -36,6 +38,8 @@ module Kifu
         add_business_to_people
         add_more_tags_to_people
         
+        write_files
+        
         display_end
       end
       
@@ -50,8 +54,8 @@ module Kifu
           @config["tags"].each_pair do |key, value|
             @tags[key] = Tag.new(
               legacy_id: key,
-              tag: value[:name],
-              implies: value[:implies]
+              tag: value["name"],
+              implies: value["implies"]
             )
           end
         end
@@ -106,13 +110,14 @@ module Kifu
           prefix: Helper::trim_prefix(record.title1),
           account_since: record.membdate,
           account_close: record.quitdate,
+          account: true
         )
         
         if person.valid?
           @people[person[:legacy_id]] = person
             
           # If the person is valid, add milestones
-          unless record.birth1 == ''
+          unless record.birth1.blank?
             @person_milestones << PersonMilestone.new(
               person_legacy_id: person[:legacy_id],
               milestone: 'Birth',
@@ -121,7 +126,7 @@ module Kifu
           end
           
           # Add their address
-          unless record.haddr1 == '' && record.hcity == '' && record.hstate == '' && record.hzip == ''
+          unless record.haddr1.blank? && record.hcity.blank? && record.hstate.blank? && record.hzip.blank?
             address = Address.new(
               person_legacy_id: person[:legacy_id],
               kind: 'home',
@@ -144,7 +149,7 @@ module Kifu
           generate_phone(record.hphone2, person, 'home', false)
           
           # Tag em
-          unless record.codes[0].nil? || record.codes[0] == '' || record.codes[0] == ' '
+          unless record.codes[0].blank? || record.codes[0] == ' '
             unless @tags[record.codes[0]].nil?
               person_tag = PersonTag.new(
                 person_legacy_id: person[:legacy_id],
@@ -171,7 +176,7 @@ module Kifu
       def generate_spouse_row(record, person)
         # Add the spouse...
         spouse = Person.new(
-          last_name: record.slstname == '' ? record.lastname : record.slstname,
+          last_name: record.slstname.blank? ? record.lastname : record.slstname,
           first_name: record.sfstname,
           legacy_id: record.acctnum + "-s",
           gender: MarksHelper::gender(record.title2, record.codes[3]), # Code 3 is person 1 gender 
@@ -185,7 +190,7 @@ module Kifu
           generate_relationship('Spouse', person, spouse)
               
           # If the person is valid, add milestones
-          unless record.birth2 == ''
+          unless record.birth2.blank?
             @person_milestones << PersonMilestone.new(
               person_legacy_id: spouse[:legacy_id],
               milestone: 'Birth',
@@ -193,7 +198,7 @@ module Kifu
             )
           end
           
-          unless record.anniv == ''
+          unless record.anniv.blank?
             @person_milestones << PersonMilestone.new(
               person_legacy_id: person[:legacy_id],
               milestone: 'Marriage',
@@ -214,7 +219,7 @@ module Kifu
       end
       
       def generate_phone(field, person, kind, pref)
-        unless field == ''
+        unless field.blank?
           if field =~ /\d\d\d.\d\d\d/
             phone = Phone.new(
               person_legacy_id: person[:legacy_id],
@@ -236,7 +241,7 @@ module Kifu
       def generate_relationship(kind, person, relative)
         r1 = Relationship.new(
           person_legacy_id: person[:legacy_id],
-          spouse_legacy_id: relative[:legacy_id],
+          relative_legacy_id: relative[:legacy_id],
           relationship: Helper::relationship(kind, person[:gender], relative[:gender])
         )
         @relationships << r1
@@ -244,7 +249,7 @@ module Kifu
         opp_kind = Helper::opposite_relationship(kind)
         r2 = Relationship.new(
           person_legacy_id: relative[:legacy_id],
-          spouse_legacy_id: person[:legacy_id],
+          relative_legacy_id: person[:legacy_id],
           relationship: Helper::relationship(opp_kind, relative[:gender], person[:gender])
         )
         @relationships << r2
@@ -261,7 +266,7 @@ module Kifu
 
           # Find the person
           person = @people[record.acctnum]
-          unless person.nil? && record.cmistext.length > 0 # && record.cmiscode == 'EMAIL'
+          unless person.nil? || record.cmistext.blank?
             @emails << Email.new(
               person_legacy_id: person[:legacy_id],
               kind: 'home',
@@ -291,6 +296,7 @@ module Kifu
         new_legacy_number = 0
         memorial_people.each do |memorial_person|
           person = @people[memorial_person[:person_legacy_id]]
+          puts Color.cyan("  WARN ") + "Memorial" + Color.cyan(": Person not found : #{memorial_person[:person_legacy_id]}") if person.nil?
           next if person.nil? # Should never happen!
           
           relative = nil
@@ -326,11 +332,11 @@ module Kifu
           next if relative.nil?
           
           # Build the relationship
-          if relative[:relationship] == "B" || relative[:relationship] == "HB" || relative[:relationship] == "HS" || relative[:relationship] == "SS" || relative[:relationship] == "SB" || relative[:relationship] == "SI"
+          if memorial_person[:relationship] == "B" || memorial_person[:relationship] == "HB" || memorial_person[:relationship] == "HS" || memorial_person[:relationship] == "SS" || memorial_person[:relationship] == "SB" || memorial_person[:relationship] == "SI"
             generate_relationship("Sibling", person, relative)
           end
           
-          if relative[:relationship] == "D" || relative[:relationship] == "S" || relative[:relationship] == "SD" || relative[:relationship] == "SN"
+          if memorial_person[:relationship] == "D" || memorial_person[:relationship] == "S" || memorial_person[:relationship] == "SD" || memorial_person[:relationship] == "SN"
             generate_relationship("Child", person, relative)
             try_code = person[:legacy_id] + "-s"
             spouse = @people[try_code]
@@ -339,15 +345,15 @@ module Kifu
             end
           end
           
-          if relative[:relationship] == "F" || relative[:relationship] == "M" || relative[:relationship] == "SF" || relative[:relationship] == "SM"
+          if memorial_person[:relationship] == "F" || memorial_person[:relationship] == "M" || memorial_person[:relationship] == "SF" || memorial_person[:relationship] == "SM"
             generate_relationship("Parent", person, relative)
           end
           
-          if relative[:relationship] == "H" || relative[:relationship] == "W"
+          if memorial_person[:relationship] == "H" || memorial_person[:relationship] == "W"
             generate_relationship("Spouse", person, relative)
           end
           
-          if relative[:relationship] == "FL" || relative[:relationship] == "ML"
+          if memorial_person[:relationship] == "FL" || memorial_person[:relationship] == "ML"
             try_code = person[:legacy_id] + "-s"
             spouse = @people[try_code]
             unless spouse.nil?
@@ -395,7 +401,7 @@ module Kifu
             next if record.nil?
             count_found += 1
             
-            next if record.eyeardcs == 0 || record.eyeardcs == ''
+            next if record.eyeardcs == 0 || record.eyeardcs.blank?
             next if supported_relationships.index(record.relate).nil?
             
             # Only add for real people (Makes no difference)
@@ -459,9 +465,9 @@ module Kifu
             @people[child[:legacy_id]] = child
             
             # Children may have spouses in MARKS
-            if record.sfstname != ''
+            if record.sfstname.present?
               spouse = Person.new(
-                last_name: record.slstname == '' ? record.lastname : record.slstname,
+                last_name: record.slstname.blank? ? record.lastname : record.slstname,
                 first_name: record.sfstname,
                 legacy_id: record.acctnum + "-" + record.childnum + "-s",
                 gender: record.sex == "F" ? "M" : "F"
@@ -476,7 +482,7 @@ module Kifu
             end
             
             # Birthdates
-            unless record.bday == ''
+            unless record.bday.blank?
               @person_milestones << PersonMilestone.new(
                 person_legacy_id: child[:legacy_id],
                 milestone: 'Birth',
@@ -484,7 +490,7 @@ module Kifu
               )
             end
             
-            unless record.bmdate == ''
+            unless record.bmdate.blank?
               @person_milestones << PersonMilestone.new(
                 person_legacy_id: child[:legacy_id],
                 milestone: 'Bar/Batmitzvah',
@@ -493,7 +499,7 @@ module Kifu
             end
             
             # Add their address
-            if record.haddr1 != '' && record.hcity != '' && record.hstate != '' && record.hzip != ''
+            if record.haddr1.present? && record.hcity.present? && record.hstate.present? && record.hzip.present?
               address = Address.new(
                 person_legacy_id: child[:legacy_id],
                 kind: 'home',
@@ -539,10 +545,10 @@ module Kifu
           next if person.nil?
           
           person[:company_name] = record.firmname
-          person[:occupation_id] = @occupations[record.occupcd]
+          person[:occupation_id] = @occupations[record.occupcd].nil? ? '' : @occupations[record.occupcd][:name]
           
           # Add their address
-          unless record.baddr1 == '' && record.bcity == '' && record.bstate == '' && record.bzip == ''
+          unless record.baddr1.blank? && record.bcity.blank? && record.bstate.blank? && record.bzip.blank?
             address = Address.new(
               person_legacy_id: person[:legacy_id],
               kind: 'work',
@@ -583,7 +589,7 @@ module Kifu
             person = spouse unless spouse.nil?
           end
           
-          unless record.group == ''
+          unless record.group.blank?
             unless @tags[record.group].nil?
               person_tag = PersonTag.new(
                 person_legacy_id: person[:legacy_id],
@@ -599,7 +605,7 @@ module Kifu
             end
           end
 
-          unless record.subgroup == ''
+          unless record.subgroup.blank?
             unless @tags[record.subgroup].nil?
               person_tag = PersonTag.new(
                 person_legacy_id: person[:legacy_id],
@@ -615,6 +621,39 @@ module Kifu
             end
           end
           
+        end
+      end
+      
+      # -------------------------------------------------------------------------
+      
+      def write_files
+        write_hash_file "tags", @tags, Tag.new().header
+        write_hash_file "occupations", @occupations, Occupation.new().header
+        write_hash_file "people", @people, Person.new().header
+        
+        write_array_file "relationships", @relationships, Relationship.new().header
+        write_array_file "person_milestones", @person_milestones, PersonMilestone.new().header
+        write_array_file "person_tags", @person_tags, PersonTag.new().header
+        write_array_file "addresses", @addresses, Address.new().header
+        write_array_file "phones", @phones, Phone.new().header
+        write_array_file "emails", @emails, Email.new().header
+      end
+      
+      def write_hash_file(name, a_hash, header)
+        File.open("#{@dest.path}/#{name}.csv", "w") do |f|
+          f.puts header
+          a_hash.values.each do |item|
+            f.puts item.to_csv
+          end
+        end
+      end
+
+      def write_array_file(name, a_array, header)
+        File.open("#{@dest.path}/#{name}.csv", "w") do |f|
+          f.puts header
+          a_array.each do |item|
+            f.puts item.to_csv
+          end
         end
       end
       
