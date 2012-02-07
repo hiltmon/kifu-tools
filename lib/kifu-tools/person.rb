@@ -64,7 +64,7 @@ module Kifu
           array << "Must have a Last Name" if @model[:last_name] == ''
           array << "Must have a Gender" if @model[:gender] == ''
         end
-        
+                
         array
       end
       

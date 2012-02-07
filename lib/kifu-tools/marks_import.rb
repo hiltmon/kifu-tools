@@ -66,8 +66,12 @@ module Kifu
           legacy_id: record.acctnum,
           gender: MarksHelper::gender(record.title1, record.codes[2]), # Code 2 is person 1 gender
           salutation: record.lablname,
-          prefix: Helper::trim_prefix(record.title1)
+          prefix: Helper::trim_prefix(record.title1),
+          account_since: record.membdate,
+          account_close: record.quitdate,
         )
+        
+        puts person[:account_since]
           
         if person.valid?
           @people[person[:legacy_id]] = person
