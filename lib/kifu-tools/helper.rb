@@ -34,6 +34,16 @@ module Kifu
         ''    
       end
       
+      def self.opposite_relationship(kind)
+        return 'spouse' if kind.downcase == 'spouse'
+        return 'sibling' if kind.downcase == 'sibling'
+        return 'parent' if kind.downcase == 'child'
+        return 'child' if kind.downcase == 'parent'
+        
+        # Unable
+        ''
+      end
+      
       def self.relationship(kind, person_gender, relative_gender)
         if kind.downcase == 'spouse'
           if person_gender == 'M' && relative_gender == 'F'
@@ -44,6 +54,37 @@ module Kifu
           end
           return 'Spouse'
         end
+        
+        if kind.downcase == 'sibling'
+          if relative_gender == 'F'
+            return 'Sister'
+          end
+          if relative_gender == 'M'
+            return 'Brother'
+          end
+          return 'Sibling'
+        end
+        
+        if kind.downcase == 'child'
+          if relative_gender == 'F'
+            return 'Daughter'
+          end
+          if relative_gender == 'M'
+            return 'Son'
+          end
+          return 'Child'
+        end
+        
+        if kind.downcase == 'parent'
+          if relative_gender == 'F'
+            return 'Mother'
+          end
+          if relative_gender == 'M'
+            return 'Father'
+          end
+          return 'Parent'
+        end
+        
         
         # Unable
         ''
