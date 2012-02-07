@@ -3,9 +3,9 @@ require 'kifu-tools'
 
 class Import < Thor
   
-  desc "marks FOLDER", "Creates the import data from a set of MARKS files"
-  def marks(folder)
-    import = Kifu::Tools::MarksImport.new(folder)
+  desc "marks CONFIG FOLDER", "Creates the import data from a set of MARKS files"
+  def marks(config, folder)
+    import = Kifu::Tools::MarksImport.new(config, folder)
     import.perform
   end
   
