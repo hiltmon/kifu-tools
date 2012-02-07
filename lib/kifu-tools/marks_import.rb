@@ -13,6 +13,7 @@ module Kifu
         @people = {}
         @relationships = []
         @person_milestones = []
+        @addresses = []
       end
       
       def perform
@@ -59,8 +60,27 @@ module Kifu
               on: record.birth1
             )
           end
+          
+          # Add their address
+          unless record.haddr1 == '' && record.hcity == '' && record.hstate == '' && record.hzip == ''
+            address = Address.new(
+              person_legacy_id: person[:legacy_id],
+              kind: 'home',
+              pref: true,
+              street: record.haddr1,
+              extended: record.haddr2,
+              city: record.hcity,
+              state: record.hstate,
+              post_code: record.hzip
+            )
+            if address.valid?
+              @addresses << address
+            else
+              puts Color.cyan("  WARN ") + "Address" + Color.cyan(": #{address.errors.join(', ')} : #{person.description}")
+            end
+          end
         else
-          puts Color.red("  Invalid ") + Color.magenta("Person") + Color.red(": #{person.errors.join(', ')} : #{person[:legacy_id]} #{person[:last_name]}, #{person[:first_name]} ")
+          puts Color.red("  FAIL ") + "Person" + Color.red(": #{person.errors.join(', ')} : #{person.description}")
           return nil
         end
         
@@ -105,7 +125,7 @@ module Kifu
             )            
           end
         else
-          puts Color.red("  Invalid ") + Color.magenta("Spouse") + Color.red(": #{spouse.errors.join(', ')} : #{person[:legacy_id]} #{spouse[:last_name]}, #{spouse[:first_name]} ")
+          puts Color.red("  FAIL ") + "Spouse" + Color.red(": #{spouse.errors.join(', ')} : #{spouse.description}")
           return nil
         end      
         
@@ -138,6 +158,7 @@ module Kifu
         puts "         People: " + Color.green("#{@people.keys.length}")
         puts "  Relationships: " + Color.green("#{@relationships.length}")
         puts "     Milestones: " + Color.green("#{@person_milestones.length}")
+        puts "      Addresses: " + Color.green("#{@addresses.length}")
         puts Color.yellow("Marks Import ") + Color.green("Done...")
       end
       

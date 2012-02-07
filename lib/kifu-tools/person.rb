@@ -55,10 +55,6 @@ module Kifu
         end
       end
       
-      # def valid?
-      #   errors.length == 0
-      # end
-      
       def errors
         array = []
         if @model[:company_card]
@@ -72,23 +68,13 @@ module Kifu
         array
       end
       
-      # def [](key)
-      #   @model[key]
-      # end
-      # 
-      # def []=(key, value)
-      #   @model[key] = value
-      # end
-      # 
-      # def to_csv
-      #   '"' + @model.values.join('","') + '"'
-      #   # "#{first_name},#{last_name},#{middle_name},#{prefix},#{suffix},#{gender},#{company_name},#{company_card},#{title},#{department},#{photo},#{legacy_id},#{account},#{account_since},#{account_close},#{member},#{occupation_id},#{affiliation_id},#{joined_at},#{salutation},#{alternate_name},#{nickname}"
-      # end
-      # 
-      # def header
-      #   @model.keys.join(',')
-      #   # "first_name,last_name,middle_name,prefix,suffix,gender,company_name,company_card,title,department,photo,legacy_id,account,account_since,account_close,member,occupation_id,affiliation_id,joined_at,salutation,alternate_name,nickname"
-      # end
+      def description
+        if @model[:company_card]
+          "#{@model[:legacy_id]} #{@model[:company_name]} (Company)"
+        else
+          "#{@model[:legacy_id]} #{@model[:last_name]}, #{@model[:first_name]}"
+        end
+      end
       
     end
     
