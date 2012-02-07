@@ -29,6 +29,8 @@ module Kifu
         
         array << "Must be home or work" if @model[:kind] != 'home' && @model[:kind] != 'work'
         
+        array << "Zip must be numbers" if @model[:postcode] =~ /[^\d-]/ # Not digits and -
+        
         array
       end
       

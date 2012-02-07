@@ -14,6 +14,7 @@ module Kifu
         @config = JSON.parse(IO.read(config))
         
         @tags = {}
+        @occupations = {}
         @people = {}
         @relationships = []
         @person_milestones = []
@@ -27,10 +28,13 @@ module Kifu
         display_start
         
         generate_tag_file
+        generate_occupation_file
         generate_people_file
         generate_email_file
         add_memorials_to_people
         add_children_to_people
+        add_business_to_people
+        add_more_tags_to_people
         
         display_end
       end
@@ -40,6 +44,8 @@ module Kifu
       # -------------------------------------------------------------------------
       
       def generate_tag_file
+        puts "  Loading " + Color.yellow("Tags") + "..."
+        
         unless @config["tags"].nil?
           @config["tags"].each_pair do |key, value|
             @tags[key] = Tag.new(
@@ -48,6 +54,29 @@ module Kifu
               implies: value[:implies]
             )
           end
+        end
+        
+        table = DBF::Table.new("#{@folder.path}/ESGRPCD.DBF")
+        table.each do |record|
+          next if record.nil?
+          
+          @tags[record.group] = Tag.new(
+            legacy_id: record.group,
+            tag: record.groupnme,
+            implies: false
+          )
+        end
+        
+      end
+
+      def generate_occupation_file
+        puts "  Loading " + Color.yellow("Occupations") + "..."
+        
+        table = DBF::Table.new("#{@folder.path}/ESOCCUPC.DBF")
+        table.each do |record|
+          next if record.nil?
+          
+          @occupations[record.occupcd] = Occupation.new(name: record.occupate)
         end
       end
       
@@ -111,19 +140,23 @@ module Kifu
           end
           
           # Add their phones
-          generate_phone(record.hphone1, person, true)
-          generate_phone(record.hphone2, person, false)
+          generate_phone(record.hphone1, person, 'home', true)
+          generate_phone(record.hphone2, person, 'home', false)
           
           # Tag em
           unless record.codes[0].nil? || record.codes[0] == '' || record.codes[0] == ' '
-            person_tag = PersonTag.new(
-              person_legacy_id: person[:legacy_id],
-              tag_legacy_id: @tags[record.codes[0]]
-            )
-            if person_tag.valid?
-              @person_tags << person_tag
+            unless @tags[record.codes[0]].nil?
+              person_tag = PersonTag.new(
+                person_legacy_id: person[:legacy_id],
+                tag_legacy_id: record.codes[0]
+              )
+              if person_tag.valid?
+                @person_tags << person_tag
+              else
+                puts Color.cyan("  WARN ") + "PersonTag" + Color.cyan(": #{person_tag.errors.join(', ')} : #{person.description} (Tag is #{record.codes[0]})")
+              end
             else
-              puts Color.cyan("  WARN ") + "PersonTag" + Color.cyan(": #{person_tag.errors.join(', ')} : #{person.description} (Tag is #{record.codes[0]})")
+              puts Color.cyan("  WARN ") + "PersonTag" + Color.cyan(": Invalid Tag Code : #{person.description} (Tag is #{record.codes[0]})")              
             end
           end
           
@@ -180,12 +213,12 @@ module Kifu
         spouse
       end
       
-      def generate_phone(field, person, pref)
+      def generate_phone(field, person, kind, pref)
         unless field == ''
           if field =~ /\d\d\d.\d\d\d/
             phone = Phone.new(
               person_legacy_id: person[:legacy_id],
-              kind: 'home',
+              kind: kind,
               pref: pref,
               phone_number: field.match(/[0-9\-]*/).to_s.gsub(/--/, '-')
             )
@@ -477,7 +510,7 @@ module Kifu
             end
           
             # Add their phones
-            generate_phone(record.phone1, child, true)
+            generate_phone(record.phone1, child, 'home', true)
             
             # Add the relationships
             generate_relationship('Child', person, child)
@@ -490,6 +523,103 @@ module Kifu
       
       # -------------------------------------------------------------------------
       
+      def add_business_to_people
+        puts "  Loading " + Color.yellow("Business") + "..."
+        
+        table = DBF::Table.new("#{@folder.path}/ESBNA1.DBF")
+        table.each do |record|
+          next if record.nil?
+          
+          # Find the person
+          legacy_key = record.acctnum
+          legacy_key = record.acctnum + "-s" if record.reccd == "2"
+          person = @people[legacy_key]
+          
+          # Create a company card? NO
+          next if person.nil?
+          
+          person[:company_name] = record.firmname
+          person[:occupation_id] = @occupations[record.occupcd]
+          
+          # Add their address
+          unless record.baddr1 == '' && record.bcity == '' && record.bstate == '' && record.bzip == ''
+            address = Address.new(
+              person_legacy_id: person[:legacy_id],
+              kind: 'work',
+              street: record.baddr1,
+              extended: record.baddr2,
+              city: record.bcity,
+              state: record.bstate,
+              post_code: record.bzip
+            )
+            if address.valid?
+              @addresses << address
+            else
+              puts Color.cyan("  WARN ") + "BusAddr" + Color.cyan(": #{address.errors.join(', ')} : #{person.description}")
+            end
+          end
+          
+          generate_phone(record.bphone1, person, 'work', false)
+          generate_phone(record.bphone2, person, 'work', false)
+        end
+      end
+      
+      # -------------------------------------------------------------------------
+      
+      def add_more_tags_to_people
+        puts "  Loading " + Color.yellow("Groups") + "..."
+        
+        table = DBF::Table.new("#{@folder.path}/ESGROUP.DBF")
+        table.each do |record|
+          next if record.nil?
+        
+          person = @people[record.acctnum]
+          next if person.nil?
+          
+          # Person or spouse??
+          if person[:first_name] != record.frstname
+            # Try the spouse
+            spouse = @people[record.acctnum + "-s"]
+            person = spouse unless spouse.nil?
+          end
+          
+          unless record.group == ''
+            unless @tags[record.group].nil?
+              person_tag = PersonTag.new(
+                person_legacy_id: person[:legacy_id],
+                tag_legacy_id: record.group
+              )
+              if person_tag.valid?
+                @person_tags << person_tag
+              else
+                puts Color.cyan("  WARN ") + "PersonTag" + Color.cyan(": #{person_tag.errors.join(', ')} : #{person.description} (Group is #{record.group})")
+              end
+            else
+              puts Color.cyan("  WARN ") + "PersonTag" + Color.cyan(": Invalid Tag Code : #{person.description} (Group is #{record.group})")
+            end
+          end
+
+          unless record.subgroup == ''
+            unless @tags[record.subgroup].nil?
+              person_tag = PersonTag.new(
+                person_legacy_id: person[:legacy_id],
+                tag_legacy_id: record.subgroup
+              )
+              if person_tag.valid?
+                @person_tags << person_tag
+              else
+                puts Color.cyan("  WARN ") + "PersonTag" + Color.cyan(": #{person_tag.errors.join(', ')} : #{person.description} (Group is #{record.subgroup})")
+              end
+            else
+              puts Color.cyan("  WARN ") + "PersonTag" + Color.cyan(": Invalid Tag Code : #{person.description} (Group is #{record.subgroup})")
+            end
+          end
+          
+        end
+      end
+      
+      # -------------------------------------------------------------------------
+      
       def display_start
         puts Color.yellow("Marks Import ") + Color.green("Starting...")
       end
@@ -497,6 +627,7 @@ module Kifu
       def display_end
         puts Color.yellow("Marks Import Statistics")
         puts "           Tags: " + Color.green("#{@tags.keys.length}")
+        puts "    Occupations: " + Color.green("#{@occupations.keys.length}")
         puts "         People: " + Color.green("#{@people.keys.length}")
         puts "  Relationships: " + Color.green("#{@relationships.length}")
         puts "     Milestones: " + Color.green("#{@person_milestones.length}")
