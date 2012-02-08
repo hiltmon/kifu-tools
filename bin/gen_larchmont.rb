@@ -6,9 +6,22 @@ require 'json'
 config = {}
 
 config[:company] = {
-  subdomain: 'Larchmont',
-  name: 'Larchmont'
+  subdomain: 'larchmont',
+  name: 'Larchmont Temple',
+  fiscal_year_month: 7,
+  email: 'email@larchmont.dev'
 }
+
+config[:users] = [
+  {
+    name: 'admin',
+    email: 'admin@larchmont.dev',
+    subdomain: 'larchmont',
+    password: 'admin00',
+    password_confirmation: 'admin00',
+    role: 'Admin'
+  },
+]
 
 # Membership codes are: B,F,I,H,A,R,S,M,,P,N,Z,,,\,D
 config[:tags] = {

@@ -310,7 +310,7 @@ module Kifu
             # Make the person
             relative = Person.new(
               last_name: memorial_person[:last_name],
-              first_name: memorial_person[:last_name],
+              first_name: memorial_person[:first_name],
               legacy_id: memorial_person[:new_person_legacy_id],
               gender: memorial_person[:gender]           
             )
@@ -455,8 +455,8 @@ module Kifu
 
           # Make the child
           child = Person.new(
-            last_name: record.frstname,
-            first_name: record.lastname,
+            last_name: record.lastname,
+            first_name: record.frstname,
             legacy_id: record.acctnum + "-" + record.childnum,
             gender: record.sex,
             prefix: Helper::trim_prefix(record.title),
@@ -627,6 +627,8 @@ module Kifu
       # -------------------------------------------------------------------------
       
       def write_files
+        File.open("#{@dest.path}/config.json", "w") {|f| f.write(@config.to_json) }
+        
         write_hash_file "tags", @tags, Tag.new().header
         write_hash_file "occupations", @occupations, Occupation.new().header
         write_hash_file "people", @people, Person.new().header
