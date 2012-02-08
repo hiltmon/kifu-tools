@@ -404,18 +404,30 @@ module Kifu
             next if record.eyeardcs == 0 || record.eyeardcs.blank?
             next if supported_relationships.index(record.relate).nil?
             
-            # Only add for real people (Makes no difference)
-            # person = @people[record.acctnum]
-            # next if person.nil?
+            # Is this for the person or their spouse (the in-law issue)
+            person = @people[record.acctnum]
+            puts Color.cyan("  WARN ") + "Memorial" + Color.cyan(": Person not found : #{record.acctnum}") if person.nil?
+            next if person.nil?
+
+            person_legacy_id = record.acctnum
+            if record.frstname != person[:first_name]
+              # try the spouse
+              spouse = @people[record.acctnum + "-s"]
+              unless spouse.nil?
+                if record.frstname == spouse[:first_name]
+                  person_legacy_id = record.acctnum + "-s"
+                end
+              end
+            end
             
-            # Maka an ISO date
+            # Make an ISO date
             day  = record.edateyhr.to_s[-2,2]
             month = record.edateyhr.to_s.sub(day, '')
             month = "0#{month}" if month.length == 1
             iso_date = "#{record.eyeardcs}-#{month}-#{day}"
             
             memorial = TempMemorial.new(
-              person_legacy_id: record.acctnum,
+              person_legacy_id: person_legacy_id,
               gender: record.sex,
               first_name: record.yfstname,
               last_name: record.ylstname,
