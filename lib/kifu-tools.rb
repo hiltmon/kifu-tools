@@ -15,6 +15,7 @@ require "kifu-tools/relationship"
 require "kifu-tools/address"
 require "kifu-tools/phone"
 require "kifu-tools/email"
+require "kifu-tools/event"
 
 require "kifu-tools/marks_helper"
 require "kifu-tools/marks_import"

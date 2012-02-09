@@ -28,7 +28,7 @@ module Kifu
         @phones = []
         @emails = []
         
-        @events = []
+        @events = {}
       end
       
       def perform
@@ -45,7 +45,8 @@ module Kifu
         add_more_tags_to_people
         
         # Events
-        
+        load_regular_events
+        # load_tribute_events
 
         write_files
         
@@ -678,6 +679,49 @@ module Kifu
       
       # -------------------------------------------------------------------------
       
+      def load_regular_events
+        puts "  Loading " + Color.yellow("Regular Events") + "..."
+        
+        table = DBF::Table.new("#{@folder.path}/ESRTRCDS.DBF")
+        table.each do |record|
+          next if record.nil?
+
+          legacy_id = record.trancode.strip
+          legacy_id = "0#{legacy_id}" if legacy_id.length < 2
+          
+          year = @config["import"]["start_year"]
+          year_start_date = Date.new(year, @config["company"]["fiscal_year_month"], 1)
+          old_legacy_id = ''
+          while year_start_date <= Date.today
+            special_legacy_id = legacy_id + year.to_s[-2,2]
+            event = Event.new(
+              legacy_id: special_legacy_id,
+              name: "#{year} - #{record.trandesc.capitalize}",
+              detail: record.trandsc2.capitalize,
+              income_account_id: record.glcode,
+              bank_account_id: record.glcode2,
+              status: (year_start_date < Date.new(Date.today.year-1, Date.today.month, Date.today.day) ? 'Closed' : 'Open'),
+              start_at: year_start_date.to_s,
+              end_at: (Date.new(year+1, @config["company"]["fiscal_year_month"], 1) - 1).to_s,
+              old_event_id: old_legacy_id
+            )
+            
+            if event.valid?
+              @events[event[:legacy_id]] = event
+              
+              old_legacy_id = special_legacy_id.dup
+            else
+              puts Color.red("  FAIL ") + "Event" + Color.red(": #{event.errors.join(', ')} : #{event[:name]}")
+            end
+            
+            year += 1
+            year_start_date = Date.new(year, @config["company"]["fiscal_year_month"], 1)
+          end
+        end
+      end
+      
+      # -------------------------------------------------------------------------
+      
       def write_files
         File.open("#{@dest.path}/config.json", "w") {|f| f.write(@config.to_json) }
         
@@ -692,6 +736,8 @@ module Kifu
         write_array_file "addresses", @addresses, Address.new().header
         write_array_file "phones", @phones, Phone.new().header
         write_array_file "emails", @emails, Email.new().header
+        
+        write_hash_file "events", @events, Event.new().header
       end
       
       def write_hash_file(name, a_hash, header)
@@ -731,6 +777,7 @@ module Kifu
         puts "      Addresses: " + Color.green("#{@addresses.length}")
         puts "         Phones: " + Color.green("#{@phones.length}")
         puts "         Emails: " + Color.green("#{@emails.length}")
+        puts "         Events: " + Color.green("#{@events.keys.length}")
         puts Color.yellow("Marks Import ") + Color.green("Done...")
       end
       
