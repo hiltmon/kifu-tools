@@ -16,6 +16,7 @@ module Kifu
         @config = JSON.parse(IO.read(config))
         
         @import_start_date = Date.new(@config["import"]["start_year"], @config["company"]["fiscal_year_month"], 1)  
+        @marks = @config["marks"]
         
         @chart_accounts = {}
         @tags = {}
@@ -46,7 +47,7 @@ module Kifu
         
         # Events
         load_regular_events
-        # load_tribute_events
+        load_tribute_events
 
         write_files
         
@@ -146,7 +147,7 @@ module Kifu
           last_name: record.lastname,
           first_name: record.frstname,
           legacy_id: record.acctnum,
-          gender: MarksHelper::gender(record.title1, record.codes[2]), # Code 2 is person 1 gender
+          gender: MarksHelper::gender(record.title1, record.codes[@marks["person_gender_code"].to_i]),
           salutation: record.lablname,
           prefix: Helper::trim_prefix(record.title1),
           account_since: record.membdate,
@@ -190,19 +191,19 @@ module Kifu
           generate_phone(record.hphone2, person, 'home', false)
           
           # Tag em
-          unless record.codes[0].blank? || record.codes[0] == ' '
-            unless @tags[record.codes[0]].nil?
+          unless record.codes[@marks["membership_tag_code"].to_i].blank? || record.codes[@marks["membership_tag_code"].to_i] == ' '
+            unless @tags[record.codes[@marks["membership_tag_code"].to_i]].nil?
               person_tag = PersonTag.new(
                 person_legacy_id: person[:legacy_id],
-                tag_legacy_id: record.codes[0]
+                tag_legacy_id: record.codes[@marks["membership_tag_code"]]
               )
               if person_tag.valid?
                 @person_tags << person_tag
               else
-                puts Color.cyan("  WARN ") + "PersonTag" + Color.cyan(": #{person_tag.errors.join(', ')} : #{person.description} (Tag is #{record.codes[0]})")
+                puts Color.cyan("  WARN ") + "PersonTag" + Color.cyan(": #{person_tag.errors.join(', ')} : #{person.description} (Tag is #{record.codes[@marks["membership_tag_code"]]})")
               end
             else
-              puts Color.cyan("  WARN ") + "PersonTag" + Color.cyan(": Invalid Tag Code : #{person.description} (Tag is #{record.codes[0]})")              
+              puts Color.cyan("  WARN ") + "PersonTag" + Color.cyan(": Invalid Tag Code : #{person.description} (Tag is #{record.codes[@marks["membership_tag_code"]]})")              
             end
           end
           
@@ -220,7 +221,7 @@ module Kifu
           last_name: record.slstname.blank? ? record.lastname : record.slstname,
           first_name: record.sfstname,
           legacy_id: record.acctnum + "-s",
-          gender: MarksHelper::gender(record.title2, record.codes[3]), # Code 3 is person 1 gender 
+          gender: MarksHelper::gender(record.title2, record.codes[@marks["spouse_gender_code"].to_i]),
           prefix: Helper::trim_prefix(record.title2)
         )
             
@@ -696,8 +697,8 @@ module Kifu
             special_legacy_id = legacy_id + year.to_s[-2,2]
             event = Event.new(
               legacy_id: special_legacy_id,
-              name: "#{year} - #{record.trandesc.capitalize}",
-              detail: record.trandsc2.capitalize,
+              name: "#{year} - #{Helper::titleize(record.trandesc)}",
+              detail: Helper::titleize(record.trandsc2),
               income_account_id: record.glcode,
               bank_account_id: record.glcode2,
               status: (year_start_date < Date.new(Date.today.year-1, Date.today.month, Date.today.day) ? 'Closed' : 'Open'),
@@ -708,6 +709,54 @@ module Kifu
             
             if event.valid?
               @events[event[:legacy_id]] = event
+              
+              old_legacy_id = special_legacy_id.dup
+            else
+              puts Color.red("  FAIL ") + "Event" + Color.red(": #{event.errors.join(', ')} : #{event[:name]}")
+            end
+            
+            year += 1
+            year_start_date = Date.new(year, @config["company"]["fiscal_year_month"], 1)
+          end
+        end
+      end
+      
+      def load_tribute_events
+        puts "  Loading " + Color.yellow("Tribute Events") + "..."
+        
+        table = DBF::Table.new("#{@folder.path}/ESRBTRIM.DBF")
+        table.each do |record|
+          next if record.nil?
+
+          legacy_id = record.ceventcd.strip
+          legacy_id = "0#{legacy_id}" if legacy_id.length < 2
+          
+          year = @config["import"]["start_year"]
+          year_start_date = Date.new(year, @config["company"]["fiscal_year_month"], 1)
+          old_legacy_id = ''
+          while year_start_date <= Date.today
+            special_legacy_id = legacy_id + year.to_s[-2,2]
+            event = Event.new(
+              legacy_id: special_legacy_id,
+              name: "#{year} - #{Helper::titleize(record.ceventdsc)}",
+              income_account_id: @marks["tribute_income_account_code"],
+              bank_account_id: @marks["tribute_bank_account_code"],
+              status: (year_start_date < Date.new(Date.today.year-1, Date.today.month, Date.today.day) ? 'Closed' : 'Open'),
+              start_at: year_start_date.to_s,
+              end_at: (Date.new(year+1, @config["company"]["fiscal_year_month"], 1) - 1).to_s,
+              old_event_id: old_legacy_id
+            )
+            
+            if event.valid?
+              if @events[event[:legacy_id]].present?
+                if @events[event[:legacy_id]][:name] != event[:name]
+                  # puts Color.cyan("  WARN ") + "Event" + Color.cyan(": Tribute event matches regular event, different name : #{event[:name]}")
+                end
+                
+              else
+                puts Color.cyan("  ODD  ") + "Event" + Color.cyan(": Tribute not in events, added : #{event[:name]}")
+                @events[event[:legacy_id]] = event
+              end
               
               old_legacy_id = special_legacy_id.dup
             else

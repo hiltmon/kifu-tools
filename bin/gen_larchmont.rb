@@ -6,7 +6,15 @@ require 'json'
 config = {}
 
 config[:import] = {
-  start_year: 2008 # Implies F09...?????
+  start_year: 2008, # Implies F09...?????
+}
+
+config[:marks] = {
+  tribute_bank_account_code: '000-0001',
+  tribute_income_account_code: '000-0002',
+  membership_tag_code: 0,
+  person_gender_code: 2,
+  spouse_gender_code: 3
 }
 
 config[:company] = {
