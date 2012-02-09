@@ -15,6 +15,9 @@ module Kifu
         @dest = Dir.new(dest)
         @config = JSON.parse(IO.read(config))
         
+        @import_start_date = Date.new(@config["import"]["start_year"], @config["company"]["fiscal_year_month"], 1)  
+        
+        @chart_accounts = {}
         @tags = {}
         @occupations = {}
         @people = {}
@@ -24,11 +27,14 @@ module Kifu
         @addresses = []
         @phones = []
         @emails = []
+        
+        @events = []
       end
       
       def perform
         display_start
         
+        generate_chart_accounts_file
         generate_tag_file
         generate_occupation_file
         generate_people_file
@@ -38,12 +44,46 @@ module Kifu
         add_business_to_people
         add_more_tags_to_people
         
+        # Events
+        
+
         write_files
         
         display_end
       end
       
       private
+
+      # -------------------------------------------------------------------------
+            
+      def generate_chart_accounts_file
+        puts "  Loading " + Color.yellow("Chart Accounts") + "..."
+        
+        table = DBF::Table.new("#{@folder.path}/ESRTRCDS.DBF")
+        table.each do |record|
+          next if record.nil?
+          
+          # Assuming income, bank and receivable is the order of codes
+          @chart_accounts[record.glcode] = ChartAccount.new(
+            code: record.glcode,
+            name: record.glcode,
+            kind: 'Income'
+          )
+
+          @chart_accounts[record.glcode2] = ChartAccount.new(
+            code: record.glcode2,
+            name: record.glcode2,
+            kind: 'Bank'
+          )
+
+          @chart_accounts[record.glcode3] = ChartAccount.new(
+            code: record.glcode3,
+            name: record.glcode3,
+            kind: 'Receivable'
+          )
+        end
+        
+      end
       
       # -------------------------------------------------------------------------
       
@@ -641,6 +681,7 @@ module Kifu
       def write_files
         File.open("#{@dest.path}/config.json", "w") {|f| f.write(@config.to_json) }
         
+        write_hash_file "chart_accounts", @chart_accounts, ChartAccount.new().header
         write_hash_file "tags", @tags, Tag.new().header
         write_hash_file "occupations", @occupations, Occupation.new().header
         write_hash_file "people", @people, Person.new().header
@@ -675,10 +716,12 @@ module Kifu
       
       def display_start
         puts Color.yellow("Marks Import ") + Color.green("Starting...")
+        puts "    Start from: " + Color.green("#{@import_start_date}")
       end
       
       def display_end
         puts Color.yellow("Marks Import Statistics")
+        puts " Chart Accounts: " + Color.green("#{@chart_accounts.keys.length}")
         puts "           Tags: " + Color.green("#{@tags.keys.length}")
         puts "    Occupations: " + Color.green("#{@occupations.keys.length}")
         puts "         People: " + Color.green("#{@people.keys.length}")

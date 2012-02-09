@@ -5,6 +5,7 @@ require "kifu-tools/helper"
 require "kifu-tools/kifu_model"
 require "kifu-tools/temp_memorial"
 
+require "kifu-tools/chart_account"
 require "kifu-tools/tag"
 require "kifu-tools/occupation"
 require "kifu-tools/person"

@@ -5,6 +5,10 @@ require 'json'
 
 config = {}
 
+config[:import] = {
+  start_year: 2008 # Implies F09...?????
+}
+
 config[:company] = {
   subdomain: 'larchmont',
   name: 'Larchmont Temple',
