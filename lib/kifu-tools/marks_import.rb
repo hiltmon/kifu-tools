@@ -30,6 +30,7 @@ module Kifu
         @emails = []
         
         @events = {}
+        @attendings = []
       end
       
       def perform
@@ -48,6 +49,11 @@ module Kifu
         # Events
         load_regular_events
         load_tribute_events
+
+        # Billings        
+        generate_attendings
+        
+
 
         write_files
         
@@ -722,6 +728,9 @@ module Kifu
       end
       
       def load_tribute_events
+        # Optional
+        return unless File.exists?("#{@folder.path}/ESRBTRIM.DBF")
+        
         puts "  Loading " + Color.yellow("Tribute Events") + "..."
         
         table = DBF::Table.new("#{@folder.path}/ESRBTRIM.DBF")
@@ -771,6 +780,49 @@ module Kifu
       
       # -------------------------------------------------------------------------
       
+      def generate_attendings
+        
+        generate_attendings_from_file "Current YTD", "#{@folder.path}/ESRBYTD.DBF"
+
+        # Dir.glob("#{@folder.path}ESYAHR*.DBF").each do |file_path|
+        #   table = DBF::Table.new(file_path)
+        #   table.each do |record|
+        #     next if record.nil?
+        #     count_found += 1
+        #   end
+        # end
+      end
+      
+      def generate_attendings_from_file(which, file_path)
+        puts "  Pass 1 " + Color.yellow(which) + " Attendings..."
+        table = DBF::Table.new(file_path)
+        count_found = 0
+        count_created = 0
+        table.each do |record|
+          next if record.nil?
+          next unless record.trnstype == 'B' # Assume BILLING
+          
+          count_found += 1
+          
+          person = @people[record.acctnum]
+          legacy_id = record.trnscdyr.strip
+          legacy_id = "0#{legacy_id}" if legacy_id.length < 4
+          event = @events[legacy_id]
+          
+          if person.present? && event.present?
+            @attendings << Attending.new(
+              person_legacy_id: person[:legacy_id],
+              event_legacy_id: event[:legacy_id]
+            )
+            count_created += 1
+          end
+        end
+        puts "         Found: " + Color.yellow(count_found) + ", Created: " + Color.green(count_created) + "..."
+        
+      end
+      
+      # -------------------------------------------------------------------------
+      
       def write_files
         File.open("#{@dest.path}/config.json", "w") {|f| f.write(@config.to_json) }
         
@@ -787,6 +839,7 @@ module Kifu
         write_array_file "emails", @emails, Email.new().header
         
         write_hash_file "events", @events, Event.new().header
+        write_array_file "attendings", @attendings, Attending.new().header
       end
       
       def write_hash_file(name, a_hash, header)
@@ -827,6 +880,7 @@ module Kifu
         puts "         Phones: " + Color.green("#{@phones.length}")
         puts "         Emails: " + Color.green("#{@emails.length}")
         puts "         Events: " + Color.green("#{@events.keys.length}")
+        puts "     Attendings: " + Color.green("#{@attendings.length}")
         puts Color.yellow("Marks Import ") + Color.green("Done...")
       end
       
