@@ -10,6 +10,8 @@ module Kifu
       
       def self.marks_to_iso_date(item)
         string = item.to_s
+        return '' if string.length < 5
+        
         if string.length == 6
           yy = string[0,2]
           mm = string[2,2]

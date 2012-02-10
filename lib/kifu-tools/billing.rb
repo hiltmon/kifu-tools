@@ -6,6 +6,7 @@ module Kifu
             
       def initialize(params = {})
         @model = {
+          legacy_id: '',
           person_legacy_id: '',
           event_legacy_id: '',
           bill_date: '',
@@ -27,6 +28,7 @@ module Kifu
       def errors
         array = []
 
+        array << "Must have a legacy id" if @model[:legacy_id] == ''        
         array << "Must have a person" if @model[:person_legacy_id] == ''        
         array << "Must have an event" if @model[:event_legacy_id] == ''        
         array << "Must have an bill date" if @model[:bill_date] == ''        

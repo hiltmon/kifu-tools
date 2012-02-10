@@ -12,6 +12,7 @@ config[:import] = {
 config[:marks] = {
   tribute_bank_account_code: '000-0001',
   tribute_income_account_code: '000-0002',
+  deposit_bank_account_code: '000-0001',
   membership_tag_code: 0,
   person_gender_code: 2,
   spouse_gender_code: 3

@@ -18,6 +18,9 @@ module Kifu
         @import_start_date = Date.new(@config["import"]["start_year"], @config["company"]["fiscal_year_month"], 1)  
         @marks = @config["marks"]
         
+        @internal_batch_code = 0
+        @internal_batch_count = 20 # Triggers a new batch code
+        
         @chart_accounts = {}
         @tags = {}
         @occupations = {}
@@ -31,7 +34,12 @@ module Kifu
         
         @events = {}
         @attendings = []
-        @billings = []
+        @billings = {}
+        
+        @temp_batches = {}
+        @deposits = {}
+        @payments = {}
+        @allocations = []
       end
       
       def perform
@@ -54,6 +62,9 @@ module Kifu
         # Billings        
         generate_attendings
         generate_billings # This is special :)
+        
+        load_temp_batches
+        generate_deposit_payment_allocations
 
         write_files
         
@@ -852,7 +863,8 @@ module Kifu
           event = @events[legacy_id]
           
           if person.present? && event.present?
-            @billings << Billing.new(
+            billing = Billing.new(
+              legacy_id: "#{person[:legacy_id]}/#{event[:legacy_id]}/A",
               person_legacy_id: person[:legacy_id],
               event_legacy_id: event[:legacy_id],
               bill_date: Helper::marks_to_iso_date(record.trnsdate),
@@ -860,6 +872,14 @@ module Kifu
               bill_amount: record.trnsamnt,
               payable_amount: record.trnsamnt
             )
+            
+            if billing.valid?
+              # Ignore double billings as the attendance hack applies on import
+              # puts Color.red("Double Billing? #{billing[:legacy_id]}") if @billings[billing[:legacy_id]].present?
+              @billings[billing[:legacy_id]] = billing
+            else
+              puts Color.cyan("  WARN ") + "Billing" + Color.cyan(": #{billing.errors.join(', ')} : #{billing[:legacy_id]}")
+            end
             
             # And set the event billing amount
             if event[:regular_attendance_fee].blank?
@@ -872,6 +892,153 @@ module Kifu
           end
         end
         puts "         Found: " + Color.yellow(count_found) + ", Created: " + Color.green(count_created) + "..." 
+      end
+      
+      # -------------------------------------------------------------------------
+      
+      def load_temp_batches
+        
+        puts "  Loading " + Color.yellow("Batches") + "..."
+        count_found = 0
+        count_created = 0
+        
+        table = DBF::Table.new("#{@folder.path}/ESRBTCHN.DBF")
+        table.each do |record|
+          next if record.nil?
+          
+          count_found += 1
+          
+          batch = TempBatch.new(
+            legacy_id: record.batchnum.sub(/ESRB/, ''),
+            batch_date: Helper::marks_to_iso_date(record.batdate),
+            batch_count: record.batntrns.to_i
+          )
+          
+          if batch.valid?
+            @temp_batches[batch[:legacy_id]] = batch
+            count_created += 1
+          end
+        end
+        
+        puts "         Found: " + Color.yellow(count_found) + ", Created: " + Color.green(count_created) + "..." 
+      end
+      
+      # -------------------------------------------------------------------------
+      
+      def generate_deposit_payment_allocations
+        
+        generate_deposit_payment_allocations_from_file "Current YTD", "#{@folder.path}/ESRBYTD.DBF", Date.today.year
+        
+        
+      end
+      
+      def generate_deposit_payment_allocations_from_file(which, file_path, year)
+        puts "  Pass 3 " + Color.yellow(which) + " Deposits, Payments Allocations..."
+        
+        table = DBF::Table.new(file_path)
+        count_found = 0
+        count_created = 0
+        table.each do |record|
+          next if record.nil?
+          next unless record.trnstype == 'P' || record.trnstype == 'C'
+          next if record.trnsamnt.to_f < 0
+
+          deposit = find_or_create_deposit(record.bnum, year)
+          if deposit.nil?
+            puts Color.red("  FAIL ") + "Deposit" + Color.red(": Batch not found : #{record.bnum}")
+            next
+          end
+          
+          # Make a payment...
+          person = @people[record.acctnum]
+          if person.nil?
+            puts Color.red("  FAIL ") + "Deposit" + Color.red(": Person not found, unable to save payment : #{record.acctnum}")
+            next
+          end
+          
+          payment = Payment.new(
+            legacy_id: "#{@payments.keys.count}-P", # "#{deposit[:legacy_id]}/#{person[:legacy_id]}/#{record.trnscdyr}/PP",
+            deposit_legacy_id: deposit[:legacy_id],
+            person_legacy_id: person[:legacy_id],
+            kind: 'Check',
+            # reference_code: '',
+            payment_amount: record.trnsamnt,
+            allocated_amount: 0.0,
+            note: record.comment,
+            # third_party_id: '',
+            # honor: '',
+            # honoree: '',
+            # notify_id: '',
+            # decline_date: '',
+            # decline_posted: false,
+            # refund_amount: 0
+          )
+          @payments[payment[:legacy_id]] = payment
+          
+          e_legacy_id = record.trnscdyr.strip
+          e_legacy_id = "0#{e_legacy_id}" if e_legacy_id.length < 4
+          event = @events[e_legacy_id]
+          
+          if event.nil?
+            puts Color.cyan("  WARN ") + "Allocation" + Color.cyan(": Event not found, unable to allocate : #{e_legacy_id}")
+            next
+          end
+          
+          @allocations << Allocation.new(
+            payment_legacy_id: payment[:legacy_id],
+            billing_legacy_id: "#{person[:legacy_id]}/#{event[:legacy_id]}/A",
+            allocation_amount: record.trnsamnt
+          )
+        end
+      end
+      
+      def find_or_create_deposit(batch_code, year)
+        return @deposits[batch_code] unless @deposits[batch_code].nil?
+        
+        if batch_code.length == 4
+          # Must be a temp_batch
+          batch = @temp_batches[batch_code]
+          
+          unless batch.nil?
+            deposit = Deposit.new(
+              legacy_id: batch[:legacy_id],
+              deposit_date: batch[:batch_date],
+              bank_account_id: @marks["deposit_bank_account_code"]
+            )
+            if deposit.valid?
+              @deposits[deposit[:legacy_id]] = deposit
+              return deposit
+            else
+              puts Color.red("  FAIL ") + "Deposit" + Color.red(": #{deposit.errors.join(', ')} : #{deposit[:legacy_id]}")
+              return nil
+            end
+          end
+        end
+        
+        # Missing or invalid batch code
+        # Create a series of hack deposits with up to 20 payments each
+        if @internal_batch_count >= 20
+          # Create a new dummy deposit
+          @internal_batch_code += 1
+          legacy_id = "FAKE-#{@internal_batch_code}"
+          legacy_id = "FAKE-000#{@internal_batch_code}" if legacy_id.length == 6
+          legacy_id = "FAKE-00#{@internal_batch_code}" if legacy_id.length == 7
+          legacy_id = "FAKE-0#{@internal_batch_code}" if legacy_id.length == 8
+          deposit = Deposit.new(
+            legacy_id: legacy_id,
+            deposit_date: Date.new(year, @config["company"]["fiscal_year_month"], 1),
+            bank_account_id: @marks["deposit_bank_account_code"]
+          )
+          @deposits[deposit[:legacy_id]] = deposit
+          @internal_batch_count = 0
+        end
+        
+        legacy_id = "FAKE-#{@internal_batch_code}"
+        legacy_id = "FAKE-000#{@internal_batch_code}" if legacy_id.length == 6
+        legacy_id = "FAKE-00#{@internal_batch_code}" if legacy_id.length == 7
+        legacy_id = "FAKE-0#{@internal_batch_code}" if legacy_id.length == 8
+        @internal_batch_count += 1
+        @deposits[legacy_id]
       end
       
       # -------------------------------------------------------------------------
@@ -893,7 +1060,10 @@ module Kifu
         
         write_hash_file "events", @events, Event.new().header
         write_array_file "attendings", @attendings, Attending.new().header
-        write_array_file "billings", @billings, Billing.new().header
+        write_hash_file "billings", @billings, Billing.new().header
+        write_hash_file "deposits", @deposits, Deposit.new().header
+        write_hash_file "payments", @payments, Payment.new().header
+        write_array_file "allocations", @allocations, Allocation.new().header
       end
       
       def write_hash_file(name, a_hash, header)
@@ -935,7 +1105,10 @@ module Kifu
         puts "         Emails: " + Color.green("#{@emails.length}")
         puts "         Events: " + Color.green("#{@events.keys.length}")
         puts "     Attendings: " + Color.green("#{@attendings.length}")
-        puts "       Billings: " + Color.green("#{@billings.length}")
+        puts "       Billings: " + Color.green("#{@billings.keys.length}")
+        puts "       Deposits: " + Color.green("#{@deposits.keys.length}")
+        puts "       Payments: " + Color.green("#{@payments.keys.length}")
+        puts "    Allocations: " + Color.green("#{@allocations.length}")
         puts Color.yellow("Marks Import ") + Color.green("Done...")
       end
       
