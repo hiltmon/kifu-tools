@@ -4,6 +4,7 @@ require "kifu-tools/helper"
 
 require "kifu-tools/kifu_model"
 require "kifu-tools/temp_memorial"
+require "kifu-tools/temp_batch"
 
 require "kifu-tools/chart_account"
 require "kifu-tools/tag"
@@ -18,6 +19,9 @@ require "kifu-tools/email"
 require "kifu-tools/event"
 require "kifu-tools/attending"
 require "kifu-tools/billing"
+require "kifu-tools/deposit"
+require "kifu-tools/payment"
+require "kifu-tools/allocation"
 
 require "kifu-tools/marks_helper"
 require "kifu-tools/marks_import"
