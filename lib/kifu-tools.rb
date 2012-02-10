@@ -17,6 +17,7 @@ require "kifu-tools/phone"
 require "kifu-tools/email"
 require "kifu-tools/event"
 require "kifu-tools/attending"
+require "kifu-tools/billing"
 
 require "kifu-tools/marks_helper"
 require "kifu-tools/marks_import"

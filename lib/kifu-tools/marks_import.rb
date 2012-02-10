@@ -31,6 +31,7 @@ module Kifu
         
         @events = {}
         @attendings = []
+        @billings = []
       end
       
       def perform
@@ -52,8 +53,7 @@ module Kifu
 
         # Billings        
         generate_attendings
-        
-
+        generate_billings # This is special :)
 
         write_files
         
@@ -817,8 +817,61 @@ module Kifu
             count_created += 1
           end
         end
-        puts "         Found: " + Color.yellow(count_found) + ", Created: " + Color.green(count_created) + "..."
+        puts "         Found: " + Color.yellow(count_found) + ", Created: " + Color.green(count_created) + "..." 
+      end
+      
+      # -------------------------------------------------------------------------
+      
+      def generate_billings
         
+        generate_billings_from_file "Current YTD", "#{@folder.path}/ESRBYTD.DBF"
+
+        # Dir.glob("#{@folder.path}ESYAHR*.DBF").each do |file_path|
+        #   table = DBF::Table.new(file_path)
+        #   table.each do |record|
+        #     next if record.nil?
+        #     count_found += 1
+        #   end
+        # end
+      end
+      
+      def generate_billings_from_file(which, file_path)
+        puts "  Pass 2 " + Color.yellow(which) + " Billings..."
+        table = DBF::Table.new(file_path)
+        count_found = 0
+        count_created = 0
+        table.each do |record|
+          next if record.nil?
+          next unless record.trnstype == 'B' # Assume BILLING
+          
+          count_found += 1
+          
+          person = @people[record.acctnum]
+          legacy_id = record.trnscdyr.strip
+          legacy_id = "0#{legacy_id}" if legacy_id.length < 4
+          event = @events[legacy_id]
+          
+          if person.present? && event.present?
+            @billings << Billing.new(
+              person_legacy_id: person[:legacy_id],
+              event_legacy_id: event[:legacy_id],
+              bill_date: Helper::marks_to_iso_date(record.trnsdate),
+              bill_for: 'Attendance',
+              bill_amount: record.trnsamnt,
+              payable_amount: record.trnsamnt
+            )
+            
+            # And set the event billing amount
+            if event[:regular_attendance_fee].blank?
+              event[:regular_attendance_fee] = record.trnsamnt
+            else
+              event[:regular_attendance_fee] = [event[:regular_attendance_fee], record.trnsamnt].max
+            end
+            
+            count_created += 1
+          end
+        end
+        puts "         Found: " + Color.yellow(count_found) + ", Created: " + Color.green(count_created) + "..." 
       end
       
       # -------------------------------------------------------------------------
@@ -840,6 +893,7 @@ module Kifu
         
         write_hash_file "events", @events, Event.new().header
         write_array_file "attendings", @attendings, Attending.new().header
+        write_array_file "billings", @billings, Billing.new().header
       end
       
       def write_hash_file(name, a_hash, header)
@@ -881,6 +935,7 @@ module Kifu
         puts "         Emails: " + Color.green("#{@emails.length}")
         puts "         Events: " + Color.green("#{@events.keys.length}")
         puts "     Attendings: " + Color.green("#{@attendings.length}")
+        puts "       Billings: " + Color.green("#{@billings.length}")
         puts Color.yellow("Marks Import ") + Color.green("Done...")
       end
       
