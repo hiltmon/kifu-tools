@@ -15,6 +15,10 @@ module Kifu
         @dest = Dir.new(dest)
         @config = JSON.parse(IO.read(config))
         
+        @import_start_date = Date.new(@config["import"]["start_year"], @config["company"]["fiscal_year_month"], 1)  
+        @marks = @config["marks"]
+        
+        @chart_accounts = {}
         @tags = {}
         @occupations = {}
         @people = {}
@@ -24,11 +28,16 @@ module Kifu
         @addresses = []
         @phones = []
         @emails = []
+        
+        @events = {}
+        @attendings = []
+        @billings = []
       end
       
       def perform
         display_start
         
+        generate_chart_accounts_file
         generate_tag_file
         generate_occupation_file
         generate_people_file
@@ -38,12 +47,51 @@ module Kifu
         add_business_to_people
         add_more_tags_to_people
         
+        # Events
+        load_regular_events
+        load_tribute_events
+
+        # Billings        
+        generate_attendings
+        generate_billings # This is special :)
+
         write_files
         
         display_end
       end
       
       private
+
+      # -------------------------------------------------------------------------
+            
+      def generate_chart_accounts_file
+        puts "  Loading " + Color.yellow("Chart Accounts") + "..."
+        
+        table = DBF::Table.new("#{@folder.path}/ESRTRCDS.DBF")
+        table.each do |record|
+          next if record.nil?
+          
+          # Assuming income, bank and receivable is the order of codes
+          @chart_accounts[record.glcode] = ChartAccount.new(
+            code: record.glcode,
+            name: record.glcode,
+            kind: 'Income'
+          )
+
+          @chart_accounts[record.glcode2] = ChartAccount.new(
+            code: record.glcode2,
+            name: record.glcode2,
+            kind: 'Bank'
+          )
+
+          @chart_accounts[record.glcode3] = ChartAccount.new(
+            code: record.glcode3,
+            name: record.glcode3,
+            kind: 'Receivable'
+          )
+        end
+        
+      end
       
       # -------------------------------------------------------------------------
       
@@ -105,7 +153,7 @@ module Kifu
           last_name: record.lastname,
           first_name: record.frstname,
           legacy_id: record.acctnum,
-          gender: MarksHelper::gender(record.title1, record.codes[2]), # Code 2 is person 1 gender
+          gender: MarksHelper::gender(record.title1, record.codes[@marks["person_gender_code"].to_i]),
           salutation: record.lablname,
           prefix: Helper::trim_prefix(record.title1),
           account_since: record.membdate,
@@ -149,19 +197,19 @@ module Kifu
           generate_phone(record.hphone2, person, 'home', false)
           
           # Tag em
-          unless record.codes[0].blank? || record.codes[0] == ' '
-            unless @tags[record.codes[0]].nil?
+          unless record.codes[@marks["membership_tag_code"].to_i].blank? || record.codes[@marks["membership_tag_code"].to_i] == ' '
+            unless @tags[record.codes[@marks["membership_tag_code"].to_i]].nil?
               person_tag = PersonTag.new(
                 person_legacy_id: person[:legacy_id],
-                tag_legacy_id: record.codes[0]
+                tag_legacy_id: record.codes[@marks["membership_tag_code"]]
               )
               if person_tag.valid?
                 @person_tags << person_tag
               else
-                puts Color.cyan("  WARN ") + "PersonTag" + Color.cyan(": #{person_tag.errors.join(', ')} : #{person.description} (Tag is #{record.codes[0]})")
+                puts Color.cyan("  WARN ") + "PersonTag" + Color.cyan(": #{person_tag.errors.join(', ')} : #{person.description} (Tag is #{record.codes[@marks["membership_tag_code"]]})")
               end
             else
-              puts Color.cyan("  WARN ") + "PersonTag" + Color.cyan(": Invalid Tag Code : #{person.description} (Tag is #{record.codes[0]})")              
+              puts Color.cyan("  WARN ") + "PersonTag" + Color.cyan(": Invalid Tag Code : #{person.description} (Tag is #{record.codes[@marks["membership_tag_code"]]})")              
             end
           end
           
@@ -179,7 +227,7 @@ module Kifu
           last_name: record.slstname.blank? ? record.lastname : record.slstname,
           first_name: record.sfstname,
           legacy_id: record.acctnum + "-s",
-          gender: MarksHelper::gender(record.title2, record.codes[3]), # Code 3 is person 1 gender 
+          gender: MarksHelper::gender(record.title2, record.codes[@marks["spouse_gender_code"].to_i]),
           prefix: Helper::trim_prefix(record.title2)
         )
             
@@ -638,9 +686,200 @@ module Kifu
       
       # -------------------------------------------------------------------------
       
+      def load_regular_events
+        puts "  Loading " + Color.yellow("Regular Events") + "..."
+        
+        table = DBF::Table.new("#{@folder.path}/ESRTRCDS.DBF")
+        table.each do |record|
+          next if record.nil?
+
+          legacy_id = record.trancode.strip
+          legacy_id = "0#{legacy_id}" if legacy_id.length < 2
+          
+          year = @config["import"]["start_year"]
+          year_start_date = Date.new(year, @config["company"]["fiscal_year_month"], 1)
+          old_legacy_id = ''
+          while year_start_date <= Date.today
+            special_legacy_id = legacy_id + year.to_s[-2,2]
+            event = Event.new(
+              legacy_id: special_legacy_id,
+              name: "#{year} - #{Helper::titleize(record.trandesc)}",
+              detail: Helper::titleize(record.trandsc2),
+              income_account_id: record.glcode,
+              bank_account_id: record.glcode2,
+              status: (year_start_date < Date.new(Date.today.year-1, Date.today.month, Date.today.day) ? 'Closed' : 'Open'),
+              start_at: year_start_date.to_s,
+              end_at: (Date.new(year+1, @config["company"]["fiscal_year_month"], 1) - 1).to_s,
+              old_event_id: old_legacy_id
+            )
+            
+            if event.valid?
+              @events[event[:legacy_id]] = event
+              
+              old_legacy_id = special_legacy_id.dup
+            else
+              puts Color.red("  FAIL ") + "Event" + Color.red(": #{event.errors.join(', ')} : #{event[:name]}")
+            end
+            
+            year += 1
+            year_start_date = Date.new(year, @config["company"]["fiscal_year_month"], 1)
+          end
+        end
+      end
+      
+      def load_tribute_events
+        # Optional
+        return unless File.exists?("#{@folder.path}/ESRBTRIM.DBF")
+        
+        puts "  Loading " + Color.yellow("Tribute Events") + "..."
+        
+        table = DBF::Table.new("#{@folder.path}/ESRBTRIM.DBF")
+        table.each do |record|
+          next if record.nil?
+
+          legacy_id = record.ceventcd.strip
+          legacy_id = "0#{legacy_id}" if legacy_id.length < 2
+          
+          year = @config["import"]["start_year"]
+          year_start_date = Date.new(year, @config["company"]["fiscal_year_month"], 1)
+          old_legacy_id = ''
+          while year_start_date <= Date.today
+            special_legacy_id = legacy_id + year.to_s[-2,2]
+            event = Event.new(
+              legacy_id: special_legacy_id,
+              name: "#{year} - #{Helper::titleize(record.ceventdsc)}",
+              income_account_id: @marks["tribute_income_account_code"],
+              bank_account_id: @marks["tribute_bank_account_code"],
+              status: (year_start_date < Date.new(Date.today.year-1, Date.today.month, Date.today.day) ? 'Closed' : 'Open'),
+              start_at: year_start_date.to_s,
+              end_at: (Date.new(year+1, @config["company"]["fiscal_year_month"], 1) - 1).to_s,
+              old_event_id: old_legacy_id
+            )
+            
+            if event.valid?
+              if @events[event[:legacy_id]].present?
+                if @events[event[:legacy_id]][:name] != event[:name]
+                  # puts Color.cyan("  WARN ") + "Event" + Color.cyan(": Tribute event matches regular event, different name : #{event[:name]}")
+                end
+                
+              else
+                puts Color.cyan("  ODD  ") + "Event" + Color.cyan(": Tribute not in events, added : #{event[:name]}")
+                @events[event[:legacy_id]] = event
+              end
+              
+              old_legacy_id = special_legacy_id.dup
+            else
+              puts Color.red("  FAIL ") + "Event" + Color.red(": #{event.errors.join(', ')} : #{event[:name]}")
+            end
+            
+            year += 1
+            year_start_date = Date.new(year, @config["company"]["fiscal_year_month"], 1)
+          end
+        end
+      end
+      
+      # -------------------------------------------------------------------------
+      
+      def generate_attendings
+        
+        generate_attendings_from_file "Current YTD", "#{@folder.path}/ESRBYTD.DBF"
+
+        # Dir.glob("#{@folder.path}ESYAHR*.DBF").each do |file_path|
+        #   table = DBF::Table.new(file_path)
+        #   table.each do |record|
+        #     next if record.nil?
+        #     count_found += 1
+        #   end
+        # end
+      end
+      
+      def generate_attendings_from_file(which, file_path)
+        puts "  Pass 1 " + Color.yellow(which) + " Attendings..."
+        table = DBF::Table.new(file_path)
+        count_found = 0
+        count_created = 0
+        table.each do |record|
+          next if record.nil?
+          next unless record.trnstype == 'B' # Assume BILLING
+          
+          count_found += 1
+          
+          person = @people[record.acctnum]
+          legacy_id = record.trnscdyr.strip
+          legacy_id = "0#{legacy_id}" if legacy_id.length < 4
+          event = @events[legacy_id]
+          
+          if person.present? && event.present?
+            @attendings << Attending.new(
+              person_legacy_id: person[:legacy_id],
+              event_legacy_id: event[:legacy_id]
+            )
+            count_created += 1
+          end
+        end
+        puts "         Found: " + Color.yellow(count_found) + ", Created: " + Color.green(count_created) + "..." 
+      end
+      
+      # -------------------------------------------------------------------------
+      
+      def generate_billings
+        
+        generate_billings_from_file "Current YTD", "#{@folder.path}/ESRBYTD.DBF"
+
+        # Dir.glob("#{@folder.path}ESYAHR*.DBF").each do |file_path|
+        #   table = DBF::Table.new(file_path)
+        #   table.each do |record|
+        #     next if record.nil?
+        #     count_found += 1
+        #   end
+        # end
+      end
+      
+      def generate_billings_from_file(which, file_path)
+        puts "  Pass 2 " + Color.yellow(which) + " Billings..."
+        table = DBF::Table.new(file_path)
+        count_found = 0
+        count_created = 0
+        table.each do |record|
+          next if record.nil?
+          next unless record.trnstype == 'B' # Assume BILLING
+          
+          count_found += 1
+          
+          person = @people[record.acctnum]
+          legacy_id = record.trnscdyr.strip
+          legacy_id = "0#{legacy_id}" if legacy_id.length < 4
+          event = @events[legacy_id]
+          
+          if person.present? && event.present?
+            @billings << Billing.new(
+              person_legacy_id: person[:legacy_id],
+              event_legacy_id: event[:legacy_id],
+              bill_date: Helper::marks_to_iso_date(record.trnsdate),
+              bill_for: 'Attendance',
+              bill_amount: record.trnsamnt,
+              payable_amount: record.trnsamnt
+            )
+            
+            # And set the event billing amount
+            if event[:regular_attendance_fee].blank?
+              event[:regular_attendance_fee] = record.trnsamnt
+            else
+              event[:regular_attendance_fee] = [event[:regular_attendance_fee], record.trnsamnt].max
+            end
+            
+            count_created += 1
+          end
+        end
+        puts "         Found: " + Color.yellow(count_found) + ", Created: " + Color.green(count_created) + "..." 
+      end
+      
+      # -------------------------------------------------------------------------
+      
       def write_files
         File.open("#{@dest.path}/config.json", "w") {|f| f.write(@config.to_json) }
         
+        write_hash_file "chart_accounts", @chart_accounts, ChartAccount.new().header
         write_hash_file "tags", @tags, Tag.new().header
         write_hash_file "occupations", @occupations, Occupation.new().header
         write_hash_file "people", @people, Person.new().header
@@ -651,6 +890,10 @@ module Kifu
         write_array_file "addresses", @addresses, Address.new().header
         write_array_file "phones", @phones, Phone.new().header
         write_array_file "emails", @emails, Email.new().header
+        
+        write_hash_file "events", @events, Event.new().header
+        write_array_file "attendings", @attendings, Attending.new().header
+        write_array_file "billings", @billings, Billing.new().header
       end
       
       def write_hash_file(name, a_hash, header)
@@ -675,10 +918,12 @@ module Kifu
       
       def display_start
         puts Color.yellow("Marks Import ") + Color.green("Starting...")
+        puts "    Start from: " + Color.green("#{@import_start_date}")
       end
       
       def display_end
         puts Color.yellow("Marks Import Statistics")
+        puts " Chart Accounts: " + Color.green("#{@chart_accounts.keys.length}")
         puts "           Tags: " + Color.green("#{@tags.keys.length}")
         puts "    Occupations: " + Color.green("#{@occupations.keys.length}")
         puts "         People: " + Color.green("#{@people.keys.length}")
@@ -688,6 +933,9 @@ module Kifu
         puts "      Addresses: " + Color.green("#{@addresses.length}")
         puts "         Phones: " + Color.green("#{@phones.length}")
         puts "         Emails: " + Color.green("#{@emails.length}")
+        puts "         Events: " + Color.green("#{@events.keys.length}")
+        puts "     Attendings: " + Color.green("#{@attendings.length}")
+        puts "       Billings: " + Color.green("#{@billings.length}")
         puts Color.yellow("Marks Import ") + Color.green("Done...")
       end
       

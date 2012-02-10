@@ -3,6 +3,28 @@ module Kifu
 
     class Helper
       
+      def self.titleize(string)
+         non_capitalized = %w{of etc and by the for on is at to but nor or a via}
+         string.downcase.gsub(/\b[a-z]+/){ |w| non_capitalized.include?(w) ? w : w.capitalize  }.sub(/^[a-z]/){|l| l.upcase }.sub(/\b[a-z][^\s]*?$/){|l| l.capitalize }        
+      end
+      
+      def self.marks_to_iso_date(item)
+        string = item.to_s
+        if string.length == 6
+          yy = string[0,2]
+          mm = string[2,2]
+          dd = string[4,2]
+        else
+          yy = "0" + string[0,1]
+          mm = string[1,2]
+          dd = string[3,2]
+        end
+        yyyy = "20" + yy
+        yyyy = "19" + yy if yy.to_i > 50
+        
+        Date.new(yyyy.to_i, mm.to_i, dd.to_i).to_s
+      end
+      
       def self.gender_from_prefix(prefix)
         value = prefix.downcase
         return 'F' if value =~ /^ms/
