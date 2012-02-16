@@ -6,8 +6,8 @@ module Kifu
             
       def initialize(params = {})
         @model = {
-          person_legacy_id: '',
-          tag_legacy_id: ''
+          person_id: '',
+          tag_id: ''
         }
         @model.merge!(params)
       end
@@ -15,7 +15,7 @@ module Kifu
       def errors
         array = []
         
-        array << "Must match a tag" if @model[:tag_legacy_id] == '' || @model[:tag_legacy_id] == nil
+        array << "Must match a tag" if @model[:tag_id] == '' || @model[:tag_id] == nil
         
         array
       end

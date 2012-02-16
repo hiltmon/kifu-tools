@@ -113,7 +113,7 @@ module Kifu
           @config["tags"].each_pair do |key, value|
             @tags[key] = Tag.new(
               legacy_id: key,
-              tag: value["name"],
+              name: value["name"],
               implies: value["implies"]
             )
           end
@@ -125,7 +125,7 @@ module Kifu
           
           @tags[record.group] = Tag.new(
             legacy_id: record.group,
-            tag: record.groupnme,
+            name: record.groupnme,
             implies: false
           )
         end
@@ -139,7 +139,7 @@ module Kifu
         table.each do |record|
           next if record.nil?
           
-          @occupations[record.occupcd] = Occupation.new(name: record.occupate)
+          @occupations[record.occupcd] = Occupation.new(name: record.occupate, :legacy_id => record.occupcd)
         end
       end
       
@@ -178,8 +178,8 @@ module Kifu
           # If the person is valid, add milestones
           unless record.birth1.blank?
             @person_milestones << PersonMilestone.new(
-              person_legacy_id: person[:legacy_id],
-              milestone: 'Birth',
+              person_id: person[:legacy_id],
+              milestone_id: 1,
               on: record.birth1
             )
           end
@@ -187,7 +187,7 @@ module Kifu
           # Add their address
           unless record.haddr1.blank? && record.hcity.blank? && record.hstate.blank? && record.hzip.blank?
             address = Address.new(
-              person_legacy_id: person[:legacy_id],
+              person_id: person[:legacy_id],
               kind: 'home',
               pref: true,
               street: record.haddr1,
@@ -211,8 +211,8 @@ module Kifu
           unless record.codes[@marks["membership_tag_code"].to_i].blank? || record.codes[@marks["membership_tag_code"].to_i] == ' '
             unless @tags[record.codes[@marks["membership_tag_code"].to_i]].nil?
               person_tag = PersonTag.new(
-                person_legacy_id: person[:legacy_id],
-                tag_legacy_id: record.codes[@marks["membership_tag_code"]]
+                person_id: person[:legacy_id],
+                tag_id: record.codes[@marks["membership_tag_code"]]
               )
               if person_tag.valid?
                 @person_tags << person_tag
@@ -251,21 +251,21 @@ module Kifu
           # If the person is valid, add milestones
           unless record.birth2.blank?
             @person_milestones << PersonMilestone.new(
-              person_legacy_id: spouse[:legacy_id],
-              milestone: 'Birth',
+              person_id: spouse[:legacy_id],
+              milestone_id: 1,
               on: record.birth2
             )
           end
           
           unless record.anniv.blank?
             @person_milestones << PersonMilestone.new(
-              person_legacy_id: person[:legacy_id],
-              milestone: 'Marriage',
+              person_id: person[:legacy_id],
+              milestone_id: 5,
               on: record.anniv
             )            
             @person_milestones << PersonMilestone.new(
-              person_legacy_id: spouse[:legacy_id],
-              milestone: 'Marriage',
+              person_id: spouse[:legacy_id],
+              milestone_id: 5,
               on: record.anniv
             )            
           end
@@ -281,7 +281,7 @@ module Kifu
         unless field.blank?
           if field =~ /\d\d\d.\d\d\d/
             phone = Phone.new(
-              person_legacy_id: person[:legacy_id],
+              person_id: person[:legacy_id],
               kind: kind,
               pref: pref,
               phone_number: field.match(/[0-9\-]*/).to_s.gsub(/--/, '-')
@@ -299,16 +299,16 @@ module Kifu
       # Does not generate any errors
       def generate_relationship(kind, person, relative)
         r1 = Relationship.new(
-          person_legacy_id: person[:legacy_id],
-          relative_legacy_id: relative[:legacy_id],
+          person_id: person[:legacy_id],
+          relative_id: relative[:legacy_id],
           relationship: Helper::relationship(kind, person[:gender], relative[:gender])
         )
         @relationships << r1
 
         opp_kind = Helper::opposite_relationship(kind)
         r2 = Relationship.new(
-          person_legacy_id: relative[:legacy_id],
-          relative_legacy_id: person[:legacy_id],
+          person_id: relative[:legacy_id],
+          relative_id: person[:legacy_id],
           relationship: Helper::relationship(opp_kind, relative[:gender], person[:gender])
         )
         @relationships << r2
@@ -327,7 +327,7 @@ module Kifu
           person = @people[record.acctnum]
           unless person.nil? || record.cmistext.blank?
             @emails << Email.new(
-              person_legacy_id: person[:legacy_id],
+              person_id: person[:legacy_id],
               kind: 'home',
               pref: false,
               email_address: record.cmistext
@@ -377,8 +377,8 @@ module Kifu
               @people[relative[:legacy_id]] = relative
               
               @person_milestones << PersonMilestone.new(
-                person_legacy_id: relative[:legacy_id],
-                milestone: 'Death',
+                person_id: relative[:legacy_id],
+                milestone_id: 2,
                 on: memorial_person[:death_date]
               )
             else
@@ -555,16 +555,16 @@ module Kifu
             # Birthdates
             unless record.bday.blank?
               @person_milestones << PersonMilestone.new(
-                person_legacy_id: child[:legacy_id],
-                milestone: 'Birth',
+                person_id: child[:legacy_id],
+                milestone_id: 1,
                 on: record.bday
               )
             end
             
             unless record.bmdate.blank?
               @person_milestones << PersonMilestone.new(
-                person_legacy_id: child[:legacy_id],
-                milestone: 'Bar/Batmitzvah',
+                person_id: child[:legacy_id],
+                milestone_id: 7,
                 on: record.bmdate
               )
             end
@@ -572,7 +572,7 @@ module Kifu
             # Add their address
             if record.haddr1.present? && record.hcity.present? && record.hstate.present? && record.hzip.present?
               address = Address.new(
-                person_legacy_id: child[:legacy_id],
+                person_id: child[:legacy_id],
                 kind: 'home',
                 pref: true,
                 street: record.haddr1,
@@ -621,7 +621,7 @@ module Kifu
           # Add their address
           unless record.baddr1.blank? && record.bcity.blank? && record.bstate.blank? && record.bzip.blank?
             address = Address.new(
-              person_legacy_id: person[:legacy_id],
+              person_id: person[:legacy_id],
               kind: 'work',
               street: record.baddr1,
               extended: record.baddr2,
@@ -663,8 +663,8 @@ module Kifu
           unless record.group.blank?
             unless @tags[record.group].nil?
               person_tag = PersonTag.new(
-                person_legacy_id: person[:legacy_id],
-                tag_legacy_id: record.group
+                person_id: person[:legacy_id],
+                tag_id: record.group
               )
               if person_tag.valid?
                 @person_tags << person_tag
@@ -679,8 +679,8 @@ module Kifu
           unless record.subgroup.blank?
             unless @tags[record.subgroup].nil?
               person_tag = PersonTag.new(
-                person_legacy_id: person[:legacy_id],
-                tag_legacy_id: record.subgroup
+                person_id: person[:legacy_id],
+                tag_id: record.subgroup
               )
               if person_tag.valid?
                 @person_tags << person_tag
@@ -792,16 +792,16 @@ module Kifu
       # -------------------------------------------------------------------------
       
       def generate_attendings
+
+        # Older files...
+        process_year = @import_start_date.year + 1
+        while process_year < Date.today.year
+          extension = Helper::get_f_extension(process_year)
+          generate_attendings_from_file "Year #{process_year}", "#{@folder.path}/ESRBYTD.#{extension}"
+          process_year += 1
+        end
         
         generate_attendings_from_file "Current YTD", "#{@folder.path}/ESRBYTD.DBF"
-
-        # Dir.glob("#{@folder.path}ESYAHR*.DBF").each do |file_path|
-        #   table = DBF::Table.new(file_path)
-        #   table.each do |record|
-        #     next if record.nil?
-        #     count_found += 1
-        #   end
-        # end
       end
       
       def generate_attendings_from_file(which, file_path)
@@ -835,15 +835,15 @@ module Kifu
       
       def generate_billings
         
+        # Older files...
+        process_year = @import_start_date.year + 1
+        while process_year < Date.today.year
+          extension = Helper::get_f_extension(process_year)
+          generate_billings_from_file "Year #{process_year}", "#{@folder.path}/ESRBYTD.#{extension}"
+          process_year += 1
+        end
+        
         generate_billings_from_file "Current YTD", "#{@folder.path}/ESRBYTD.DBF"
-
-        # Dir.glob("#{@folder.path}ESYAHR*.DBF").each do |file_path|
-        #   table = DBF::Table.new(file_path)
-        #   table.each do |record|
-        #     next if record.nil?
-        #     count_found += 1
-        #   end
-        # end
       end
       
       def generate_billings_from_file(which, file_path)
@@ -926,10 +926,15 @@ module Kifu
       # -------------------------------------------------------------------------
       
       def generate_deposit_payment_allocations
+        # Older files...
+        process_year = @import_start_date.year + 1
+        while process_year < Date.today.year
+          extension = Helper::get_f_extension(process_year)
+          generate_deposit_payment_allocations_from_file "Year #{process_year}", "#{@folder.path}/ESRBYTD.#{extension}", process_year
+          process_year += 1
+        end
         
         generate_deposit_payment_allocations_from_file "Current YTD", "#{@folder.path}/ESRBYTD.DBF", Date.today.year
-        
-        
       end
       
       def generate_deposit_payment_allocations_from_file(which, file_path, year)
@@ -964,7 +969,7 @@ module Kifu
             # reference_code: '',
             payment_amount: record.trnsamnt,
             allocated_amount: 0.0,
-            note: record.comment,
+            note: record.comment.gsub(/"/, "'"),
             # third_party_id: '',
             # honor: '',
             # honoree: '',

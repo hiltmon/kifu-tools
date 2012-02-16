@@ -6,9 +6,10 @@ module Kifu
             
       def initialize(params = {})
         @model = {
-          person_legacy_id: '',
-          relative_legacy_id: '',
-          relationship: ''
+          person_id: '',
+          relative_id: '',
+          relationship: '',
+          pref: ''
         }
         @model.merge!(params)
       end

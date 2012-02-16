@@ -6,9 +6,11 @@ module Kifu
             
       def initialize(params = {})
         @model = {
+          name: '',
+          category: '',
           legacy_id: '',
-          tag: '',
-          implies: false
+          implies: false,
+          hidden: false
         }
         @model.merge!(params)
       end
