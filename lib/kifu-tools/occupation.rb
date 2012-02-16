@@ -6,7 +6,8 @@ module Kifu
             
       def initialize(params = {})
         @model = {
-          name: ''
+          name: '',
+          legacy_id: ''
         }
         @model.merge!(params)
       end

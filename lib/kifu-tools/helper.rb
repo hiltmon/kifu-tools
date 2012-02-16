@@ -27,6 +27,20 @@ module Kifu
         Date.new(yyyy.to_i, mm.to_i, dd.to_i).to_s
       end
       
+      def self.get_f_extension(year)
+        if year >= 2000
+          year = year - 2000
+          if year < 10
+            "F0#{year}"
+          else
+            "F#{year}"
+          end
+        else
+          year = year - 1900
+          "F#{year}"
+        end
+      end
+      
       def self.gender_from_prefix(prefix)
         value = prefix.downcase
         return 'F' if value =~ /^ms/

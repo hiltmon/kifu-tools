@@ -6,7 +6,8 @@ require 'json'
 config = {}
 
 config[:import] = {
-  start_year: 2008, # Implies F09...?????
+  # start_year: 2008, # Implies F09...?????
+  start_year: 2011, # Implies F09...?????
 }
 
 config[:marks] = {
@@ -38,16 +39,16 @@ config[:users] = [
 
 # Membership codes are: B,F,I,H,A,R,S,M,,P,N,Z,,,\,D
 config[:tags] = {
-  'B' => {name: 'B-Member', implies: true},
-  'F' => {name: 'F-Member', implies: true},
-  'I' => {name: 'I-Member', implies: true},
-  'H' => {name: 'H-Member', implies: true},
-  'A' => {name: 'A-Member', implies: true},
-  'R' => {name: 'R-Member', implies: true},
-  'S' => {name: 'S-Member', implies: true},
+  'B' => {name: 'Non Resident Member', implies: true},
+  'F' => {name: 'Full Family Member', implies: true},
+  'I' => {name: 'Individiual Member', implies: true},
+  'H' => {name: 'Honorary Member', implies: true},
+  'A' => {name: 'Adjusted Member', implies: true},
+  'R' => {name: 'Religious School Member', implies: true},
+  'S' => {name: 'Single Member', implies: true},
   'M' => {name: 'M-Member', implies: true},
   'P' => {name: 'P-Member', implies: true},
-  'N' => {name: 'N-Member', implies: true},
+  'N' => {name: 'No Billing Member', implies: true},
   'Z' => {name: 'Z-Member', implies: true},
   'D' => {name: 'D-Member', implies: true}
 }

@@ -6,7 +6,7 @@ module Kifu
             
       def initialize(params = {})
         @model = {
-          person_legacy_id: '',
+          person_id: '',
           kind: '',
           phone_number: '',
           pref: false
