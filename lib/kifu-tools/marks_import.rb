@@ -15,7 +15,8 @@ module Kifu
         @dest = Dir.new(dest)
         @config = JSON.parse(IO.read(config))
         
-        @import_start_date = Date.new(@config["import"]["start_year"], @config["company"]["fiscal_year_month"], 1)  
+        @import_start_year = @config["import"]["start_year"].to_i
+        @import_start_date = Date.new(@import_start_year, @config["company"]["fiscal_year_month"], 1)  
         @marks = @config["marks"]
         
         @internal_batch_code = 0
@@ -33,7 +34,7 @@ module Kifu
         @emails = []
         
         @events = {}
-        @attendings = []
+        @attendings = {}
         @billings = {}
         
         @temp_batches = {}
@@ -708,13 +709,15 @@ module Kifu
           legacy_id = "0#{legacy_id}" if legacy_id.length < 2
           
           year = @config["import"]["start_year"]
+          display_end = @config["import"]["year_is_at_end_of_period"]
+          display_year = (display_end.nil? ? year + 1 : (display_end ? year + 1 : year))
           year_start_date = Date.new(year, @config["company"]["fiscal_year_month"], 1)
           old_legacy_id = ''
           while year_start_date <= Date.today
             special_legacy_id = legacy_id + year.to_s[-2,2]
             event = Event.new(
               legacy_id: special_legacy_id,
-              name: "#{year} - #{Helper::titleize(record.trandesc)}",
+              name: "#{display_year} - #{Helper::titleize(record.trandesc)}",
               detail: Helper::titleize(record.trandsc2),
               income_account_id: record.glcode,
               bank_account_id: record.glcode2,
@@ -733,6 +736,7 @@ module Kifu
             end
             
             year += 1
+            display_year += 1
             year_start_date = Date.new(year, @config["company"]["fiscal_year_month"], 1)
           end
         end
@@ -752,13 +756,15 @@ module Kifu
           legacy_id = "0#{legacy_id}" if legacy_id.length < 2
           
           year = @config["import"]["start_year"]
+          display_end = @config["import"]["year_is_at_end_of_period"]
+          display_year = (display_end.nil? ? year + 1 : (display_end ? year + 1 : year))
           year_start_date = Date.new(year, @config["company"]["fiscal_year_month"], 1)
           old_legacy_id = ''
           while year_start_date <= Date.today
             special_legacy_id = legacy_id + year.to_s[-2,2]
             event = Event.new(
               legacy_id: special_legacy_id,
-              name: "#{year} - #{Helper::titleize(record.ceventdsc)}",
+              name: "#{display_year} - #{Helper::titleize(record.ceventdsc)}",
               income_account_id: @marks["tribute_income_account_code"],
               bank_account_id: @marks["tribute_bank_account_code"],
               status: (year_start_date < Date.new(Date.today.year-1, Date.today.month, Date.today.day) ? 'Closed' : 'Open'),
@@ -784,6 +790,7 @@ module Kifu
             end
             
             year += 1
+            display_year += 1
             year_start_date = Date.new(year, @config["company"]["fiscal_year_month"], 1)
           end
         end
@@ -809,26 +816,65 @@ module Kifu
         table = DBF::Table.new(file_path)
         count_found = 0
         count_created = 0
+        count_dups = 0
         table.each do |record|
           next if record.nil?
           next unless record.trnstype == 'B' # Assume BILLING
           
           count_found += 1
           
-          person = @people[record.acctnum]
-          legacy_id = record.trnscdyr.strip
-          legacy_id = "0#{legacy_id}" if legacy_id.length < 4
-          event = @events[legacy_id]
+          result = add_attending(record)
           
-          if person.present? && event.present?
-            @attendings << Attending.new(
+          count_created += 1 if result == 1
+          count_dups += 1 if result == 0
+          
+          # person = @people[record.acctnum]
+          # legacy_id = record.trnscdyr.strip
+          # legacy_id = "0#{legacy_id}" if legacy_id.length < 4
+          # event = @events[legacy_id]
+          # 
+          # if person.present? && event.present?
+          #   key = "#{person[:legacy_id]}/#{event[:legacy_id]}/A"
+          #   @attendings[key] = Attending.new(
+          #     person_legacy_id: person[:legacy_id],
+          #     event_legacy_id: event[:legacy_id]
+          #   )
+          #   count_created += 1
+          # end
+        end
+        puts "         Found: " + Color.yellow(count_found) + ", Created: " + Color.green(count_created) + ", Dups: " + Color.yellow(count_dups) + "..." 
+      end
+      
+      def add_attending(record)
+        person = @people[record.acctnum]
+        event = @events[Helper::to_legacy_id(record.trnscdyr)]
+          
+        if person.present? && event.present?
+          key = "#{person[:legacy_id]}/#{event[:legacy_id]}/A"
+          if @attendings[key].nil?
+            @attendings[key] = Attending.new(
               person_legacy_id: person[:legacy_id],
               event_legacy_id: event[:legacy_id]
             )
-            count_created += 1
+          
+            return 1
+          else
+            # If already attending, add one? NO, if already attending, all good...
+            # @attendings[key][:no_of] = @attendings[key][:no_of] + 1
+            return 0
           end
         end
-        puts "         Found: " + Color.yellow(count_found) + ", Created: " + Color.green(count_created) + "..." 
+        
+        if person.nil?
+          puts Color.cyan("  WARN ") + "Attending" + Color.cyan(": Unable to create attending for person: #{record.acctnum}.")
+        end
+        if event.nil?
+          # Only log errors for those after import period
+          unless Helper::to_legacy_year(record.trnscdyr) < @import_start_year
+            puts Color.cyan("  WARN ") + "Attending" + Color.cyan(": Unable to create attending for event: #{record.trnscdyr}.")
+          end
+        end
+        return -1 # Something went wrong, or not...
       end
       
       # -------------------------------------------------------------------------
@@ -857,29 +903,10 @@ module Kifu
           
           count_found += 1
           
-          person = @people[record.acctnum]
-          legacy_id = record.trnscdyr.strip
-          legacy_id = "0#{legacy_id}" if legacy_id.length < 4
-          event = @events[legacy_id]
-          
-          if person.present? && event.present?
-            billing = Billing.new(
-              legacy_id: "#{person[:legacy_id]}/#{event[:legacy_id]}/A",
-              person_legacy_id: person[:legacy_id],
-              event_legacy_id: event[:legacy_id],
-              bill_date: Helper::marks_to_iso_date(record.trnsdate),
-              bill_for: 'Attendance',
-              bill_amount: record.trnsamnt,
-              payable_amount: record.trnsamnt
-            )
-            
-            if billing.valid?
-              # Ignore double billings as the attendance hack applies on import
-              # puts Color.red("Double Billing? #{billing[:legacy_id]}") if @billings[billing[:legacy_id]].present?
-              @billings[billing[:legacy_id]] = billing
-            else
-              puts Color.cyan("  WARN ") + "Billing" + Color.cyan(": #{billing.errors.join(', ')} : #{billing[:legacy_id]}")
-            end
+          if add_billing(record, 'Attendance') == 1
+            legacy_id = record.trnscdyr.strip
+            legacy_id = "0#{legacy_id}" if legacy_id.length < 4
+            event = @events[legacy_id]
             
             # And set the event billing amount
             if event[:regular_attendance_fee].blank?
@@ -892,6 +919,52 @@ module Kifu
           end
         end
         puts "         Found: " + Color.yellow(count_found) + ", Created: " + Color.green(count_created) + "..." 
+      end
+      
+      def add_billing(record, kind)
+        person = @people[record.acctnum]
+        legacy_id = record.trnscdyr.strip
+        legacy_id = "0#{legacy_id}" if legacy_id.length < 4
+        event = @events[legacy_id]
+          
+        if person.present? && event.present?
+          key_part = "#{person[:legacy_id]}/#{event[:legacy_id]}"
+          
+          # Check attending
+          attending = @attendings[key_part + "/A"]
+          puts Color.cyan("  WARN ") + "Billing" + Color.cyan(": No attending for #{key_part}/A.") if attending.nil?
+          
+          billing = Billing.new(
+            legacy_id: "#{key_part}/B",
+            person_legacy_id: person[:legacy_id],
+            event_legacy_id: event[:legacy_id],
+            bill_date: Helper::marks_to_iso_date(record.trnsdate),
+            bill_for: kind,
+            bill_amount: record.trnsamnt,
+            payable_amount: record.trnsamnt
+          )
+            
+          if billing.valid?
+            # Ignore double billings as the attendance hack applies on import
+            # puts Color.red("Double Billing? #{billing[:legacy_id]}") if @billings[billing[:legacy_id]].present?
+            @billings[billing[:legacy_id]] = billing
+            return 1
+          else
+            puts Color.cyan("  WARN ") + "Billing" + Color.cyan(": #{billing.errors.join(', ')} : #{billing[:legacy_id]}")
+            return 0
+          end
+        end
+        
+        if person.nil?
+          puts Color.cyan("  WARN ") + "Billing" + Color.cyan(": Unable to create billing for person: #{record.acctnum}.")
+        end
+        if event.nil?
+          # Only log errors for those after import period
+          unless Helper::to_legacy_year(record.trnscdyr) < @import_start_year
+            puts Color.cyan("  WARN ") + "Billing" + Color.cyan(": Unable to create billing for event: #{record.trnscdyr}.")
+          end
+        end
+        return -1 # Something went wrong, or not...
       end
       
       # -------------------------------------------------------------------------
@@ -991,7 +1064,7 @@ module Kifu
           
           @allocations << Allocation.new(
             payment_legacy_id: payment[:legacy_id],
-            billing_legacy_id: "#{person[:legacy_id]}/#{event[:legacy_id]}/A",
+            billing_legacy_id: "#{person[:legacy_id]}/#{event[:legacy_id]}/L",
             allocation_amount: record.trnsamnt
           )
         end
@@ -1064,7 +1137,7 @@ module Kifu
         write_array_file "emails", @emails, Email.new().header
         
         write_hash_file "events", @events, Event.new().header
-        write_array_file "attendings", @attendings, Attending.new().header
+        write_hash_file "attendings", @attendings, Attending.new().header
         write_hash_file "billings", @billings, Billing.new().header
         write_hash_file "deposits", @deposits, Deposit.new().header
         write_hash_file "payments", @payments, Payment.new().header
@@ -1109,7 +1182,7 @@ module Kifu
         puts "         Phones: " + Color.green("#{@phones.length}")
         puts "         Emails: " + Color.green("#{@emails.length}")
         puts "         Events: " + Color.green("#{@events.keys.length}")
-        puts "     Attendings: " + Color.green("#{@attendings.length}")
+        puts "     Attendings: " + Color.green("#{@attendings.keys.length}")
         puts "       Billings: " + Color.green("#{@billings.keys.length}")
         puts "       Deposits: " + Color.green("#{@deposits.keys.length}")
         puts "       Payments: " + Color.green("#{@payments.keys.length}")
