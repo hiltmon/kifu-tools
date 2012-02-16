@@ -65,7 +65,10 @@ module Kifu
         generate_billings # This is special :)
         
         load_temp_batches
-        generate_deposit_payment_allocations
+        generate_deposit_payment_allocations_for_payments
+        generate_deposit_payment_allocations_for_contributions
+        adjust_billings
+        # generate_reallocations # No idea how to make work
 
         write_files
         
@@ -850,7 +853,7 @@ module Kifu
         event = @events[Helper::to_legacy_id(record.trnscdyr)]
           
         if person.present? && event.present?
-          key = "#{person[:legacy_id]}/#{event[:legacy_id]}/A"
+          key = "#{person[:legacy_id]}/#{event[:legacy_id]}"
           if @attendings[key].nil?
             @attendings[key] = Attending.new(
               person_legacy_id: person[:legacy_id],
@@ -904,9 +907,7 @@ module Kifu
           count_found += 1
           
           if add_billing(record, 'Attendance') == 1
-            legacy_id = record.trnscdyr.strip
-            legacy_id = "0#{legacy_id}" if legacy_id.length < 4
-            event = @events[legacy_id]
+            event = @events[Helper::to_legacy_id(record.trnscdyr)]
             
             # And set the event billing amount
             if event[:regular_attendance_fee].blank?
@@ -929,13 +930,14 @@ module Kifu
           
         if person.present? && event.present?
           key_part = "#{person[:legacy_id]}/#{event[:legacy_id]}"
+          extend_part = kind[0]
           
           # Check attending
-          attending = @attendings[key_part + "/A"]
-          puts Color.cyan("  WARN ") + "Billing" + Color.cyan(": No attending for #{key_part}/A.") if attending.nil?
+          attending = @attendings[key_part]
+          puts Color.cyan("  WARN ") + "Billing" + Color.cyan(": No attending for #{key_part}.") if attending.nil?
           
           billing = Billing.new(
-            legacy_id: "#{key_part}/B",
+            legacy_id: "#{key_part}/#{extend_part}",
             person_legacy_id: person[:legacy_id],
             event_legacy_id: event[:legacy_id],
             bill_date: Helper::marks_to_iso_date(record.trnsdate),
@@ -998,30 +1000,33 @@ module Kifu
       
       # -------------------------------------------------------------------------
       
-      def generate_deposit_payment_allocations
+      def generate_deposit_payment_allocations_for_payments
         # Older files...
         process_year = @import_start_date.year + 1
         while process_year < Date.today.year
           extension = Helper::get_f_extension(process_year)
-          generate_deposit_payment_allocations_from_file "Year #{process_year}", "#{@folder.path}/ESRBYTD.#{extension}", process_year
+          generate_for_payments "Year #{process_year}", "#{@folder.path}/ESRBYTD.#{extension}", process_year
           process_year += 1
         end
         
-        generate_deposit_payment_allocations_from_file "Current YTD", "#{@folder.path}/ESRBYTD.DBF", Date.today.year
+        generate_for_payments "Current YTD", "#{@folder.path}/ESRBYTD.DBF", Date.today.year
       end
       
-      def generate_deposit_payment_allocations_from_file(which, file_path, year)
-        puts "  Pass 3 " + Color.yellow(which) + " Deposits, Payments Allocations..."
+      def generate_for_payments(which, file_path, year)
+        puts "  Pass 3 " + Color.yellow(which) + " Deposits, Payments and Allocations (P)..."
         
         table = DBF::Table.new(file_path)
         count_found = 0
         count_created = 0
         table.each do |record|
           next if record.nil?
-          next unless record.trnstype == 'P' || record.trnstype == 'C'
+          next unless record.trnstype == 'P'
           next if record.trnsamnt.to_f < 0
-
-          deposit = find_or_create_deposit(record.bnum, year)
+          next if record.bnum.blank? # Ignore carry forwards
+          
+          count_found += 1
+          
+          deposit = find_or_create_deposit(record.bnum, record.trnsdate)
           if deposit.nil?
             puts Color.red("  FAIL ") + "Deposit" + Color.red(": Batch not found : #{record.bnum}")
             next
@@ -1035,7 +1040,7 @@ module Kifu
           end
           
           payment = Payment.new(
-            legacy_id: "#{@payments.keys.count}-P", # "#{deposit[:legacy_id]}/#{person[:legacy_id]}/#{record.trnscdyr}/PP",
+            legacy_id: "#{@payments.keys.count}/PP",
             deposit_legacy_id: deposit[:legacy_id],
             person_legacy_id: person[:legacy_id],
             kind: 'Check',
@@ -1053,28 +1058,261 @@ module Kifu
           )
           @payments[payment[:legacy_id]] = payment
           
-          e_legacy_id = record.trnscdyr.strip
-          e_legacy_id = "0#{e_legacy_id}" if e_legacy_id.length < 4
-          event = @events[e_legacy_id]
+          event = @events[Helper::to_legacy_id(record.trnscdyr)]
           
           if event.nil?
-            puts Color.cyan("  WARN ") + "Allocation" + Color.cyan(": Event not found, unable to allocate : #{e_legacy_id}")
+            # Only log errors for those after import period
+            unless Helper::to_legacy_year(record.trnscdyr) < @import_start_year
+              puts Color.cyan("  WARN ") + "Allocation" + Color.cyan(": Event not found, unable to allocate : #{record.trnscdyr}")
+            end
             next
           end
           
+          # Allocate to the attendance billing
           @allocations << Allocation.new(
             payment_legacy_id: payment[:legacy_id],
-            billing_legacy_id: "#{person[:legacy_id]}/#{event[:legacy_id]}/L",
+            billing_legacy_id: "#{person[:legacy_id]}/#{event[:legacy_id]}/A",
             allocation_amount: record.trnsamnt
           )
+          count_created += 1
+        end
+        
+        puts "         Found: " + Color.yellow(count_found) + ", Created: " + Color.green(count_created) + "..." 
+      end
+      
+      # -------------------------------------------------------------------------
+
+      def generate_deposit_payment_allocations_for_contributions
+        # Older files...
+        process_year = @import_start_date.year + 1
+        while process_year < Date.today.year
+          extension = Helper::get_f_extension(process_year)
+          generate_for_contributions "Year #{process_year}", "#{@folder.path}/ESRBYTD.#{extension}", process_year
+          process_year += 1
+        end
+        
+        generate_for_contributions "Current YTD", "#{@folder.path}/ESRBYTD.DBF", Date.today.year
+      end
+      
+      def generate_for_contributions(which, file_path, year)
+        puts "  Pass 4 " + Color.yellow(which) + " Deposits, Payments and Allocations (C)..."
+        
+        table = DBF::Table.new(file_path)
+        count_found = 0
+        count_created = 0
+        billing_found = 0
+        billing_created = 0
+        table.each do |record|
+          next if record.nil?
+          next unless record.trnstype == 'C'
+          next if record.trnsamnt.to_f < 0
+          next if record.bnum.blank? # Ignore carry forwards
+          
+          count_found += 1
+          
+          deposit = find_or_create_deposit(record.bnum, record.trnsdate)
+          if deposit.nil?
+            puts Color.red("  FAIL ") + "Deposit" + Color.red(": Batch not found : #{record.bnum}")
+            next
+          end
+          
+          # Make a payment...
+          person = @people[record.acctnum]
+          if person.nil?
+            puts Color.red("  FAIL ") + "Deposit" + Color.red(": Person not found, unable to save payment : #{record.acctnum}")
+            next
+          end
+          
+          # Special case in contributions, find the billing, if not create a sonation billing 
+          # to match the amount
+          
+          event = @events[Helper::to_legacy_id(record.trnscdyr)]
+          if event.nil?
+            # Only log errors for those after import period
+            unless Helper::to_legacy_year(record.trnscdyr) < @import_start_year
+              puts Color.cyan("  WARN ") + "Allocation" + Color.cyan(": Event not found, unable to allocate : #{record.trnscdyr}")
+            end
+            next
+          end
+          
+          billing_key_part = "#{person[:legacy_id]}/#{event[:legacy_id]}"
+          # Try for an attendance first
+          billing = @billings[billing_key_part + "/A"]
+          if billing.nil?
+            # See if we have a donation billing?
+            billing = @billings[billing_key_part + "/D"]
+            if billing.nil?
+              # Make a new donation billing...
+              add_attending(record) # In case its not there (does not increment attending count)
+              add_billing(record, 'Donation')
+              billing = @billings[billing_key_part + "/D"]
+              billing_created += 1
+            else
+              billing_found += 1
+            end
+          else
+            billing_found += 1
+          end
+          
+          payment = Payment.new(
+            legacy_id: "#{@payments.keys.count}/PC",
+            deposit_legacy_id: deposit[:legacy_id],
+            person_legacy_id: person[:legacy_id],
+            kind: 'Check',
+            # reference_code: '',
+            payment_amount: record.trnsamnt,
+            allocated_amount: 0.0,
+            note: record.comment.gsub(/"/, "'"),
+            # third_party_id: '',
+            # honor: '',
+            # honoree: '',
+            # notify_id: '',
+            # decline_date: '',
+            # decline_posted: false,
+            # refund_amount: 0
+          )
+          @payments[payment[:legacy_id]] = payment
+                    
+          # Allocate to the attendance billing
+          @allocations << Allocation.new(
+            payment_legacy_id: payment[:legacy_id],
+            billing_legacy_id: billing[:legacy_id],
+            allocation_amount: record.trnsamnt
+          )
+          count_created += 1
+        end
+        
+        puts "         Found: " + Color.yellow(count_found) + ", Created: " + Color.green(count_created) + "..." 
+        puts "      Billings: " + Color.yellow(billing_found) + ", Created: " + Color.green(billing_created) + "..." 
+      end
+      
+      # -------------------------------------------------------------------------
+
+      def adjust_billings
+        # Older files...
+        process_year = @import_start_date.year + 1
+        while process_year < Date.today.year
+          extension = Helper::get_f_extension(process_year)
+          generate_for_adjustments "Year #{process_year}", "#{@folder.path}/ESRBYTD.#{extension}", process_year
+          process_year += 1
+        end
+        
+        generate_for_adjustments "Current YTD", "#{@folder.path}/ESRBYTD.DBF", Date.today.year
+      end
+      
+      def generate_for_adjustments(which, file_path, year)
+        puts "  Pass 5 " + Color.yellow(which) + " Adjust Billings (V)..."
+        
+        table = DBF::Table.new(file_path)
+        count_found = 0
+        count_adjusted = 0
+        count_deleted = 0
+        table.each do |record|
+          next if record.nil?
+          next unless record.trnstype == 'V'
+          next if record.trnsamnt.to_f > 0
+          next if record.bnum.blank? # Ignore carry forwards
+          
+          count_found += 1
+          
+          # Make a payment...
+          person = @people[record.acctnum]
+          if person.nil?
+            puts Color.red("  FAIL ") + "Adjustment" + Color.red(": Person not found, unable to save adjustment : #{record.acctnum}")
+            next
+          end
+          
+          event = @events[Helper::to_legacy_id(record.trnscdyr)]
+          if event.nil?
+            # Only log errors for those after import period
+            unless Helper::to_legacy_year(record.trnscdyr) < @import_start_year
+              puts Color.cyan("  WARN ") + "Adjustment" + Color.cyan(": Event not found, unable to adjust : #{record.trnscdyr}")
+            end
+            next
+          end
+          
+          billing_key_part = "#{person[:legacy_id]}/#{event[:legacy_id]}"
+          # Try for an attendance first
+          billing = @billings[billing_key_part + "/A"]
+          if billing.nil?
+            # See if we have a donation billing?
+            billing = @billings[billing_key_part + "/D"]
+          end
+
+          if billing.nil?
+            puts Color.red("  FAIL ") + "Adjustment" + Color.red(": No billing to adjust : #{billing_key_part}")
+            next
+          end
+
+          # We have a billing, yay
+          payable = billing[:payable_amount].blank? ? billing[:bill_amount].to_f : billing[:payable_amount].to_f
+          new_payable = payable + record.trnsamnt.to_f
+          
+          if new_payable == 0
+
+            allocations_to_delete = []
+            @allocations.each do |allocation|
+              if allocation[:billing_legacy_id] == billing[:legacy_id]
+                allocations_to_delete << allocation
+              end
+            end
+            
+            allocations_to_delete.each do |allocation|
+              @allocations.delete(allocation)
+            end
+            
+            @billings.delete(billing[:legacy_id])
+            count_deleted += 1
+          else
+            billing[:payable_amount] = new_payable
+            count_adjusted += 1
+          end
+        end
+        puts "         Found: " + Color.yellow(count_found) + ", Adjusted: " + Color.green(count_adjusted) + ", Deleted: " + Color.green(count_deleted) + "..." 
+      end
+
+      # -------------------------------------------------------------------------      
+      
+      def generate_reallocations
+        # Older files...
+        process_year = @import_start_date.year + 1
+        while process_year < Date.today.year
+          extension = Helper::get_f_extension(process_year)
+          generate_for_realloc "Year #{process_year}", "#{@folder.path}/ESRBYTD.#{extension}", process_year
+          process_year += 1
+        end
+        
+        generate_for_realloc "Current YTD", "#{@folder.path}/ESRBYTD.DBF", Date.today.year
+      end
+      
+      def generate_for_realloc(which, file_path, year)
+        puts "  Pass 6 " + Color.yellow(which) + " Reallocations (A)..."
+        
+        table = DBF::Table.new(file_path)
+        count_found = 0
+        count_adjusted = 0
+        count_deleted = 0
+        table.each do |record|
+          next if record.nil?
+          next unless record.trnstype == 'A'
+          next if record.trnsamnt.to_f < 0
+          next if record.bnum.blank? # Ignore carry forwards
+          
+          count_found += 1
+          
+          # No idead how to find the matching payment and reallocate
+          # So FAIL
+          
         end
       end
       
-      def find_or_create_deposit(batch_code, year)
+      # -------------------------------------------------------------------------
+      
+      def find_or_create_deposit(batch_code, trnsdate)
         return @deposits[batch_code] unless @deposits[batch_code].nil?
         
-        if batch_code.length == 4
-          # Must be a temp_batch
+        if batch_code.length == 4 && batch_code.to_i != 0
+          # Must be a batch that is not in the file, so create one
           batch = @temp_batches[batch_code]
           
           unless batch.nil?
@@ -1090,33 +1328,31 @@ module Kifu
               puts Color.red("  FAIL ") + "Deposit" + Color.red(": #{deposit.errors.join(', ')} : #{deposit[:legacy_id]}")
               return nil
             end
+          else
+            puts Color.red("  FAIL ") + "Deposit" + Color.red(": Batch not found : #{deposit[:legacy_id]}")
+            return nil            
           end
         end
         
-        # Missing or invalid batch code
-        # Create a series of hack deposits with up to 20 payments each
-        if @internal_batch_count >= 20
-          # Create a new dummy deposit
-          @internal_batch_code += 1
-          legacy_id = "FAKE-#{@internal_batch_code}"
-          legacy_id = "FAKE-000#{@internal_batch_code}" if legacy_id.length == 6
-          legacy_id = "FAKE-00#{@internal_batch_code}" if legacy_id.length == 7
-          legacy_id = "FAKE-0#{@internal_batch_code}" if legacy_id.length == 8
-          deposit = Deposit.new(
-            legacy_id: legacy_id,
-            deposit_date: Date.new(year, @config["company"]["fiscal_year_month"], 1),
-            bank_account_id: @marks["deposit_bank_account_code"]
-          )
-          @deposits[deposit[:legacy_id]] = deposit
-          @internal_batch_count = 0
-        end
+        # Here on the zero codes
+        the_date = Helper::marks_to_iso_date(trnsdate)
+        new_key = "DEP-#{the_date.to_s}"
         
-        legacy_id = "FAKE-#{@internal_batch_code}"
-        legacy_id = "FAKE-000#{@internal_batch_code}" if legacy_id.length == 6
-        legacy_id = "FAKE-00#{@internal_batch_code}" if legacy_id.length == 7
-        legacy_id = "FAKE-0#{@internal_batch_code}" if legacy_id.length == 8
-        @internal_batch_count += 1
-        @deposits[legacy_id]
+        return @deposits[new_key] unless @deposits[new_key].nil?
+        
+        # Ok create it
+        deposit = Deposit.new(
+          legacy_id: new_key,
+          deposit_date: the_date,
+          bank_account_id: @marks["deposit_bank_account_code"]
+        )
+        if deposit.valid?
+          @deposits[deposit[:legacy_id]] = deposit
+          return deposit
+        else
+          puts Color.red("  FAIL ") + "Deposit" + Color.red(": #{deposit.errors.join(', ')} : #{deposit[:legacy_id]}")
+          return nil
+        end
       end
       
       # -------------------------------------------------------------------------
