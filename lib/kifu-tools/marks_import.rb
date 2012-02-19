@@ -13,9 +13,11 @@ module Kifu
         Dir.mkdir(dest) unless File.directory?(dest)
         @folder = Dir.new(folder)
         @dest = Dir.new(dest)
+        @file = File.new("#{dest}/log.markdown", "w")
         @config = JSON.parse(IO.read(config))
         
-        @import_start_date = Date.new(@config["import"]["start_year"], @config["company"]["fiscal_year_month"], 1)  
+        @import_start_year = @config["import"]["start_year"].to_i
+        @import_start_date = Date.new(@import_start_year, @config["company"]["fiscal_year_month"], 1)  
         @marks = @config["marks"]
         
         @internal_batch_code = 0
@@ -33,7 +35,7 @@ module Kifu
         @emails = []
         
         @events = {}
-        @attendings = []
+        @attendings = {}
         @billings = {}
         
         @temp_batches = {}
@@ -64,7 +66,10 @@ module Kifu
         generate_billings # This is special :)
         
         load_temp_batches
-        generate_deposit_payment_allocations
+        generate_deposit_payment_allocations_for_payments
+        generate_deposit_payment_allocations_for_contributions
+        adjust_billings
+        generate_reallocations # No idea how to make work
 
         write_files
         
@@ -74,9 +79,48 @@ module Kifu
       private
 
       # -------------------------------------------------------------------------
+      
+      def display_heading(action, message)
+        puts "#{message} : " + Color.green(action) + "..."
+        @file.puts "\n# #{message} : " + action + "...\n"
+      end
+      
+      def display_item(item, value)
+        puts "  #{item} : " + Color.green(value)
+        @file.puts "\n* #{item} : #{value}\n"
+      end
+      
+      def display_action(action, message)
+        puts action + " " + Color.yellow(message) + "..."
+        @file.puts "\n## " + action + " #{message}...\n\n"
+      end
+      
+      def display_fail(item, message)
+        puts Color.red("  FAIL ") + item + " : " + Color.red(message)
+        @file.puts "* *FAIL #{item} : #{message}*"
+      end
+      
+      def display_warn(item, message)
+        puts Color.cyan("  WARN ") + item + " : "+ Color.cyan(message)
+        @file.puts "* WARN #{item} : #{message}"
+      end
+      
+      def display_count(hash)
+        @file.puts "\n"
+        @file.puts "Processed:\n\n"
+        print "Processed: "
+        hash.each_pair do |key, value|
+          print "#{key}: " + Color.green(value) + ", "
+          @file.puts "* #{key}: #{value}"
+        end
+        @file.puts "\n"
+        puts
+      end
+      
+      # -------------------------------------------------------------------------
             
       def generate_chart_accounts_file
-        puts "  Loading " + Color.yellow("Chart Accounts") + "..."
+        display_action "Loading", "Chart Accounts"
         
         table = DBF::Table.new("#{@folder.path}/ESRTRCDS.DBF")
         table.each do |record|
@@ -107,7 +151,7 @@ module Kifu
       # -------------------------------------------------------------------------
       
       def generate_tag_file
-        puts "  Loading " + Color.yellow("Tags") + "..."
+        display_action "Loading", "Tags"
         
         unless @config["tags"].nil?
           @config["tags"].each_pair do |key, value|
@@ -133,7 +177,7 @@ module Kifu
       end
 
       def generate_occupation_file
-        puts "  Loading " + Color.yellow("Occupations") + "..."
+        display_action "Loading", "Occupations"
         
         table = DBF::Table.new("#{@folder.path}/ESOCCUPC.DBF")
         table.each do |record|
@@ -146,7 +190,7 @@ module Kifu
       # -------------------------------------------------------------------------
     
       def generate_people_file
-        puts "  Loading " + Color.yellow("People") + "..."
+        display_action "Loading", "People"
         
         table = DBF::Table.new("#{@folder.path}/ESMNA1.DBF")
         table.each do |record|
@@ -199,7 +243,7 @@ module Kifu
             if address.valid?
               @addresses << address
             else
-              puts Color.cyan("  WARN ") + "Address" + Color.cyan(": #{address.errors.join(', ')} : #{person.description}")
+              display_warn "Address", "#{address.errors.join(', ')} : #{person.description}"
             end
           end
           
@@ -217,15 +261,15 @@ module Kifu
               if person_tag.valid?
                 @person_tags << person_tag
               else
-                puts Color.cyan("  WARN ") + "PersonTag" + Color.cyan(": #{person_tag.errors.join(', ')} : #{person.description} (Tag is #{record.codes[@marks["membership_tag_code"]]})")
+                display_warn "PersonTag", "#{person_tag.errors.join(', ')} : #{person.description} (Tag is #{record.codes[@marks["membership_tag_code"]]})"
               end
             else
-              puts Color.cyan("  WARN ") + "PersonTag" + Color.cyan(": Invalid Tag Code : #{person.description} (Tag is #{record.codes[@marks["membership_tag_code"]]})")              
+              display_warn "PersonTag", "Invalid Tag Code : #{person.description} (Tag is #{record.codes[@marks["membership_tag_code"]]})"
             end
           end
           
         else
-          puts Color.red("  FAIL ") + "Person" + Color.red(": #{person.errors.join(', ')} : #{person.description}")
+          display_fail "Person", "#{person.errors.join(', ')} : #{person.description}"
           return nil
         end
         
@@ -270,7 +314,7 @@ module Kifu
             )            
           end
         else
-          puts Color.red("  FAIL ") + "Spouse" + Color.red(": #{spouse.errors.join(', ')} : #{spouse.description}")
+          display_fail "Spouse", "#{spouse.errors.join(', ')} : #{spouse.description}"
           return nil
         end      
         
@@ -289,7 +333,7 @@ module Kifu
             if phone.valid?
               @phones << phone
             else
-              puts Color.cyan("  WARN ") + "Phone" + Color.cyan(": #{phone.errors.join(', ')} : #{person.description}")
+              display_warn "Phone", "#{phone.errors.join(', ')} : #{person.description}"
             end
           end            
         end
@@ -317,7 +361,7 @@ module Kifu
       # -------------------------------------------------------------------------
       
       def generate_email_file
-        puts "  Loading " + Color.yellow("Emails") + "..."
+        display_action "Loading", "Emails"
         
         table = DBF::Table.new("#{@folder.path}/ESMNAMIS.DBF")
         table.each do |record|
@@ -346,7 +390,7 @@ module Kifu
       # If the 'next' person is the same name and has the same death date, add only the relationship
       # Else add the person and the relationship
       def add_memorials_to_people
-        puts "  Loading " + Color.yellow("Memorials") + "..."
+        display_action "Loading", "Memorials"
         
         # 1. Load them that we can
         memorial_people = build_all_valid_memorials
@@ -354,23 +398,23 @@ module Kifu
         last_memorial = TempMemorial.new() # Blank one
         new_legacy_number = 0
         memorial_people.each do |memorial_person|
-          person = @people[memorial_person[:person_legacy_id]]
-          puts Color.cyan("  WARN ") + "Memorial" + Color.cyan(": Person not found : #{memorial_person[:person_legacy_id]}") if person.nil?
+          person = @people[memorial_person[:person_id]]
+          display_warn("Memorial", "Person not found : #{memorial_person[:person_id]}") if person.nil?
           next if person.nil? # Should never happen!
           
           relative = nil
           if match_memorial(memorial_person, last_memorial)
-            memorial_person[:new_person_legacy_id] = last_memorial[:new_person_legacy_id]
-            relative = @people[memorial_person[:new_person_legacy_id]]
+            memorial_person[:new_person_id] = last_memorial[:new_person_id]
+            relative = @people[memorial_person[:new_person_id]]
           else
             new_legacy_number += 1
-            memorial_person[:new_person_legacy_id] = "MEM#{"%05d" % new_legacy_number}"
+            memorial_person[:new_person_id] = "MEM#{"%05d" % new_legacy_number}"
             
             # Make the person
             relative = Person.new(
               last_name: memorial_person[:last_name],
               first_name: memorial_person[:first_name],
-              legacy_id: memorial_person[:new_person_legacy_id],
+              legacy_id: memorial_person[:new_person_id],
               gender: memorial_person[:gender]           
             )
             if relative.valid?
@@ -382,12 +426,12 @@ module Kifu
                 on: memorial_person[:death_date]
               )
             else
-              puts Color.cyan("  WARN ") + "Person" + Color.cyan(": #{relative.errors.join(', ')} : #{relative.description}")
+              display_warn "Person", "#{relative.errors.join(', ')} : #{relative.description}"
               relative = nil
             end
           end
           
-          puts "OOPS" if relative.nil?
+          # puts "OOPS" if relative.nil?
           next if relative.nil?
           
           # Build the relationship
@@ -465,7 +509,7 @@ module Kifu
             
             # Is this for the person or their spouse (the in-law issue)
             person = @people[record.acctnum]
-            puts Color.cyan("  WARN ") + "Memorial" + Color.cyan(": Person not found : #{record.acctnum}") if person.nil?
+            display_warn("Memorial", "Person not found : #{record.acctnum}") if person.nil?
             next if person.nil?
 
             person_legacy_id = record.acctnum
@@ -486,7 +530,7 @@ module Kifu
             iso_date = "#{record.eyeardcs}-#{month}-#{day}"
             
             memorial = TempMemorial.new(
-              person_legacy_id: person_legacy_id,
+              person_id: person_legacy_id,
               gender: record.sex,
               first_name: record.yfstname,
               last_name: record.ylstname,
@@ -499,7 +543,7 @@ module Kifu
               memorial_people << memorial
               count_created += 1
             else
-              puts Color.cyan("  WARN ") + "Memorial" + Color.cyan(": #{memorial.errors.join(', ')} : #{memorial[:lst_name]}, #{memorial[:first_name]}")
+              display_warn "Memorial", "#{memorial.errors.join(', ')} : #{memorial[:lst_name]}, #{memorial[:first_name]}"
             end
           end
         end
@@ -514,7 +558,7 @@ module Kifu
       # -------------------------------------------------------------------------
       
       def add_children_to_people
-        puts "  Loading " + Color.yellow("Children") + "..."
+        display_action "Loading", "Children"
         
         table = DBF::Table.new("#{@folder.path}/ESCHLD.DBF")
         table.each do |record|
@@ -593,7 +637,7 @@ module Kifu
             generate_relationship('Child', person, child)
             
           else
-            puts Color.red("  FAIL ") + "Child" + Color.red(": #{child.errors.join(', ')} : #{child.description}")
+            display_fail "Child", "#{child.errors.join(', ')} : #{child.description}"
           end
         end
       end
@@ -601,7 +645,7 @@ module Kifu
       # -------------------------------------------------------------------------
       
       def add_business_to_people
-        puts "  Loading " + Color.yellow("Business") + "..."
+        display_action "Loading", "Business"
         
         table = DBF::Table.new("#{@folder.path}/ESBNA1.DBF")
         table.each do |record|
@@ -632,7 +676,7 @@ module Kifu
             if address.valid?
               @addresses << address
             else
-              puts Color.cyan("  WARN ") + "BusAddr" + Color.cyan(": #{address.errors.join(', ')} : #{person.description}")
+              display_warn "BusAddr", "#{address.errors.join(', ')} : #{person.description}"
             end
           end
           
@@ -644,7 +688,7 @@ module Kifu
       # -------------------------------------------------------------------------
       
       def add_more_tags_to_people
-        puts "  Loading " + Color.yellow("Groups") + "..."
+        display_action "Loading", "Groups"
         
         table = DBF::Table.new("#{@folder.path}/ESGROUP.DBF")
         table.each do |record|
@@ -669,10 +713,10 @@ module Kifu
               if person_tag.valid?
                 @person_tags << person_tag
               else
-                puts Color.cyan("  WARN ") + "PersonTag" + Color.cyan(": #{person_tag.errors.join(', ')} : #{person.description} (Group is #{record.group})")
+                display_warn "PersonTag", "#{person_tag.errors.join(', ')} : #{person.description} (Group is #{record.group})"
               end
             else
-              puts Color.cyan("  WARN ") + "PersonTag" + Color.cyan(": Invalid Tag Code : #{person.description} (Group is #{record.group})")
+              display_warn "PersonTag", "Invalid Tag Code : #{person.description} (Group is #{record.group})"
             end
           end
 
@@ -685,10 +729,10 @@ module Kifu
               if person_tag.valid?
                 @person_tags << person_tag
               else
-                puts Color.cyan("  WARN ") + "PersonTag" + Color.cyan(": #{person_tag.errors.join(', ')} : #{person.description} (Group is #{record.subgroup})")
+                display_warn "PersonTag", "#{person_tag.errors.join(', ')} : #{person.description} (Group is #{record.subgroup})"
               end
             else
-              puts Color.cyan("  WARN ") + "PersonTag" + Color.cyan(": Invalid Tag Code : #{person.description} (Group is #{record.subgroup})")
+              display_warn "PersonTag", "Invalid Tag Code : #{person.description} (Group is #{record.subgroup})"
             end
           end
           
@@ -698,7 +742,7 @@ module Kifu
       # -------------------------------------------------------------------------
       
       def load_regular_events
-        puts "  Loading " + Color.yellow("Regular Events") + "..."
+        display_action "Loading", "Regular Events"
         
         table = DBF::Table.new("#{@folder.path}/ESRTRCDS.DBF")
         table.each do |record|
@@ -708,13 +752,15 @@ module Kifu
           legacy_id = "0#{legacy_id}" if legacy_id.length < 2
           
           year = @config["import"]["start_year"]
+          display_end = @config["import"]["year_is_at_end_of_period"]
+          display_year = (display_end.nil? ? year + 1 : (display_end ? year + 1 : year))
           year_start_date = Date.new(year, @config["company"]["fiscal_year_month"], 1)
           old_legacy_id = ''
           while year_start_date <= Date.today
             special_legacy_id = legacy_id + year.to_s[-2,2]
             event = Event.new(
               legacy_id: special_legacy_id,
-              name: "#{year} - #{Helper::titleize(record.trandesc)}",
+              name: "#{display_year} - #{Helper::titleize(record.trandesc)}",
               detail: Helper::titleize(record.trandsc2),
               income_account_id: record.glcode,
               bank_account_id: record.glcode2,
@@ -729,10 +775,11 @@ module Kifu
               
               old_legacy_id = special_legacy_id.dup
             else
-              puts Color.red("  FAIL ") + "Event" + Color.red(": #{event.errors.join(', ')} : #{event[:name]}")
+              display_fail "Event", "#{event.errors.join(', ')} : #{event[:name]}"
             end
             
             year += 1
+            display_year += 1
             year_start_date = Date.new(year, @config["company"]["fiscal_year_month"], 1)
           end
         end
@@ -742,7 +789,7 @@ module Kifu
         # Optional
         return unless File.exists?("#{@folder.path}/ESRBTRIM.DBF")
         
-        puts "  Loading " + Color.yellow("Tribute Events") + "..."
+        display_action "Loading", "Tribute Events"
         
         table = DBF::Table.new("#{@folder.path}/ESRBTRIM.DBF")
         table.each do |record|
@@ -752,13 +799,15 @@ module Kifu
           legacy_id = "0#{legacy_id}" if legacy_id.length < 2
           
           year = @config["import"]["start_year"]
+          display_end = @config["import"]["year_is_at_end_of_period"]
+          display_year = (display_end.nil? ? year + 1 : (display_end ? year + 1 : year))
           year_start_date = Date.new(year, @config["company"]["fiscal_year_month"], 1)
           old_legacy_id = ''
           while year_start_date <= Date.today
             special_legacy_id = legacy_id + year.to_s[-2,2]
             event = Event.new(
               legacy_id: special_legacy_id,
-              name: "#{year} - #{Helper::titleize(record.ceventdsc)}",
+              name: "#{display_year} - #{Helper::titleize(record.ceventdsc)}",
               income_account_id: @marks["tribute_income_account_code"],
               bank_account_id: @marks["tribute_bank_account_code"],
               status: (year_start_date < Date.new(Date.today.year-1, Date.today.month, Date.today.day) ? 'Closed' : 'Open'),
@@ -770,20 +819,21 @@ module Kifu
             if event.valid?
               if @events[event[:legacy_id]].present?
                 if @events[event[:legacy_id]][:name] != event[:name]
-                  # puts Color.cyan("  WARN ") + "Event" + Color.cyan(": Tribute event matches regular event, different name : #{event[:name]}")
+                  # puts Color.cyan("  WARN ") + "Event", "Tribute event matches regular event, different name : #{event[:name]}")
                 end
                 
               else
-                puts Color.cyan("  ODD  ") + "Event" + Color.cyan(": Tribute not in events, added : #{event[:name]}")
+                display_warn "Event", "Tribute not in events, added : #{event[:name]}"
                 @events[event[:legacy_id]] = event
               end
               
               old_legacy_id = special_legacy_id.dup
             else
-              puts Color.red("  FAIL ") + "Event" + Color.red(": #{event.errors.join(', ')} : #{event[:name]}")
+              display_fail "Event", "#{event.errors.join(', ')} : #{event[:name]}"
             end
             
             year += 1
+            display_year += 1
             year_start_date = Date.new(year, @config["company"]["fiscal_year_month"], 1)
           end
         end
@@ -805,30 +855,68 @@ module Kifu
       end
       
       def generate_attendings_from_file(which, file_path)
-        puts "  Pass 1 " + Color.yellow(which) + " Attendings..."
+        display_action "Pass 1", "#{which} Attendings"
         table = DBF::Table.new(file_path)
         count_found = 0
         count_created = 0
+        count_dups = 0
         table.each do |record|
           next if record.nil?
           next unless record.trnstype == 'B' # Assume BILLING
           
           count_found += 1
           
-          person = @people[record.acctnum]
-          legacy_id = record.trnscdyr.strip
-          legacy_id = "0#{legacy_id}" if legacy_id.length < 4
-          event = @events[legacy_id]
+          result = add_attending(record, true)
           
-          if person.present? && event.present?
-            @attendings << Attending.new(
-              person_legacy_id: person[:legacy_id],
-              event_legacy_id: event[:legacy_id]
+          count_created += 1 if result == 1
+          count_dups += 1 if result == 0
+        end
+        display_count({"Found" => count_found, "Created" => count_created, "Dups" => count_dups})
+      end
+      
+      def add_attending(record, increment)
+        person = @people[record.acctnum]
+        event = @events[Helper::to_legacy_id(record.trnscdyr)]
+          
+        if person.present? && event.present?
+          key = "#{person[:legacy_id]}/#{event[:legacy_id]}"
+          if @attendings[key].nil?
+            @attendings[key] = Attending.new(
+              person_id: person[:legacy_id],
+              event_id: event[:legacy_id]
             )
-            count_created += 1
+            
+            # And set the event billing amount
+            if event[:regular_attendance_fee].blank?
+              event[:regular_attendance_fee] = record.trnsamnt
+            else
+              event[:regular_attendance_fee] = [event[:regular_attendance_fee], record.trnsamnt].max
+            end            
+          
+            return 1
+          else
+            # If already attending and the fee is the same as the event fee, add one.
+            if increment == true
+              if event[:regular_attendance_fee].to_f == record.trnsamnt.to_f
+                @attendings[key][:no_of] = @attendings[key][:no_of] + 1
+              else
+                display_warn "Attending", "Billing differs from event fee, not increasing attendings (#{event[:regular_attendance_fee]} <=> #{record.trnsamnt.to_f}): #{key}."
+              end
+            end
+            return 0
           end
         end
-        puts "         Found: " + Color.yellow(count_found) + ", Created: " + Color.green(count_created) + "..." 
+        
+        if person.nil?
+          display_warn "Attending", "Unable to create attending for person: #{record.acctnum}."
+        end
+        if event.nil?
+          # Only log errors for those after import period
+          unless Helper::to_legacy_year(record.trnscdyr) < @import_start_year
+            display_warn "Attending", "Unable to create attending for event: #{record.trnscdyr}."
+          end
+        end
+        return -1 # Something went wrong, or not...
       end
       
       # -------------------------------------------------------------------------
@@ -847,7 +935,7 @@ module Kifu
       end
       
       def generate_billings_from_file(which, file_path)
-        puts "  Pass 2 " + Color.yellow(which) + " Billings..."
+        display_action "Pass 2", "#{which} Billings"
         table = DBF::Table.new(file_path)
         count_found = 0
         count_created = 0
@@ -857,48 +945,87 @@ module Kifu
           
           count_found += 1
           
-          person = @people[record.acctnum]
-          legacy_id = record.trnscdyr.strip
-          legacy_id = "0#{legacy_id}" if legacy_id.length < 4
-          event = @events[legacy_id]
-          
-          if person.present? && event.present?
-            billing = Billing.new(
-              legacy_id: "#{person[:legacy_id]}/#{event[:legacy_id]}/A",
-              person_legacy_id: person[:legacy_id],
-              event_legacy_id: event[:legacy_id],
-              bill_date: Helper::marks_to_iso_date(record.trnsdate),
-              bill_for: 'Attendance',
-              bill_amount: record.trnsamnt,
-              payable_amount: record.trnsamnt
-            )
-            
-            if billing.valid?
-              # Ignore double billings as the attendance hack applies on import
-              # puts Color.red("Double Billing? #{billing[:legacy_id]}") if @billings[billing[:legacy_id]].present?
-              @billings[billing[:legacy_id]] = billing
-            else
-              puts Color.cyan("  WARN ") + "Billing" + Color.cyan(": #{billing.errors.join(', ')} : #{billing[:legacy_id]}")
-            end
-            
-            # And set the event billing amount
-            if event[:regular_attendance_fee].blank?
-              event[:regular_attendance_fee] = record.trnsamnt
-            else
-              event[:regular_attendance_fee] = [event[:regular_attendance_fee], record.trnsamnt].max
-            end
+          if add_billing(record, 'Attendance') == 1
+            # event = @events[Helper::to_legacy_id(record.trnscdyr)]
+            # 
+            # # And set the event billing amount
+            # if event[:regular_attendance_fee].blank?
+            #   event[:regular_attendance_fee] = record.trnsamnt
+            # else
+            #   event[:regular_attendance_fee] = [event[:regular_attendance_fee], record.trnsamnt].max
+            # end
             
             count_created += 1
           end
         end
-        puts "         Found: " + Color.yellow(count_found) + ", Created: " + Color.green(count_created) + "..." 
+        display_count({"Found" => count_found, "Created" => count_created})
+      end
+      
+      def add_billing(record, kind)
+        person = @people[record.acctnum]
+        legacy_id = record.trnscdyr.strip
+        legacy_id = "0#{legacy_id}" if legacy_id.length < 4
+        event = @events[legacy_id]
+          
+        if person.present? && event.present?
+          key_part = "#{person[:legacy_id]}/#{event[:legacy_id]}"
+          extend_part = kind[0]
+          
+          # Check attending
+          attending = @attendings[key_part]
+          display_warn("Billing", "No attending for #{key_part}.") if attending.nil?
+          
+          billing = Billing.new(
+            legacy_id: "#{key_part}/#{extend_part}",
+            person_id: person[:legacy_id],
+            event_id: event[:legacy_id],
+            bill_date: Helper::marks_to_iso_date(record.trnsdate),
+            bill_for: kind,
+            bill_amount: record.trnsamnt,
+            payable_amount: record.trnsamnt
+          )
+            
+          if billing.valid?
+            # Ignore double billings as the attendance hack applies on import
+            # Unless the amount differs
+            if @billings[billing[:legacy_id]].present?
+              old_billing = @billings[billing[:legacy_id]]
+              
+              if old_billing[:bill_amount] != billing[:bill_amount]
+                # Its an adjustment?
+                billing[:bill_amount] = billing[:bill_amount].to_f + old_billing[:bill_amount].to_f
+                billing[:payable_amount] = billing[:payable_amount].to_f + old_billing[:payable_amount].to_f
+                display_warn("Billing", "Looks like billing is being adjusted, not duplicated #{key_part}.") if attending.nil?
+              else
+                billing[:payable_amount] = billing[:payable_amount].to_f + old_billing[:payable_amount].to_f
+              end
+            end
+            
+            # puts Color.red("Double Billing? #{billing[:legacy_id]}") if @billings[billing[:legacy_id]].present?
+            @billings[billing[:legacy_id]] = billing
+            return 1
+          else
+            display_warn "Billing", "#{billing.errors.join(', ')} : #{billing[:legacy_id]}"
+            return 0
+          end
+        end
+        
+        if person.nil?
+          display_warn "Billing", "Unable to create billing for person: #{record.acctnum}."
+        end
+        if event.nil?
+          # Only log errors for those after import period
+          unless Helper::to_legacy_year(record.trnscdyr) < @import_start_year
+            display_warn "Billing", "Unable to create billing for event: #{record.trnscdyr}."
+          end
+        end
+        return -1 # Something went wrong, or not...
       end
       
       # -------------------------------------------------------------------------
       
       def load_temp_batches
-        
-        puts "  Loading " + Color.yellow("Batches") + "..."
+        display_action "Loading", "Batches"
         count_found = 0
         count_created = 0
         
@@ -919,52 +1046,244 @@ module Kifu
             count_created += 1
           end
         end
-        
-        puts "         Found: " + Color.yellow(count_found) + ", Created: " + Color.green(count_created) + "..." 
+        display_count({"Found" => count_found, "Created" => count_created})
       end
       
       # -------------------------------------------------------------------------
       
-      def generate_deposit_payment_allocations
+      def generate_deposit_payment_allocations_for_payments
         # Older files...
         process_year = @import_start_date.year + 1
         while process_year < Date.today.year
           extension = Helper::get_f_extension(process_year)
-          generate_deposit_payment_allocations_from_file "Year #{process_year}", "#{@folder.path}/ESRBYTD.#{extension}", process_year
+          generate_for_payments "Year #{process_year}", "#{@folder.path}/ESRBYTD.#{extension}", process_year
           process_year += 1
         end
         
-        generate_deposit_payment_allocations_from_file "Current YTD", "#{@folder.path}/ESRBYTD.DBF", Date.today.year
+        generate_for_payments "Current YTD", "#{@folder.path}/ESRBYTD.DBF", Date.today.year
       end
       
-      def generate_deposit_payment_allocations_from_file(which, file_path, year)
-        puts "  Pass 3 " + Color.yellow(which) + " Deposits, Payments Allocations..."
+      def generate_for_payments(which, file_path, year)
+        display_action "Pass 3", "#{which} Deposits, Payments and Allocations (P)"
         
         table = DBF::Table.new(file_path)
         count_found = 0
         count_created = 0
+        count_adjusted = 0
         table.each do |record|
           next if record.nil?
-          next unless record.trnstype == 'P' || record.trnstype == 'C'
-          next if record.trnsamnt.to_f < 0
-
-          deposit = find_or_create_deposit(record.bnum, year)
+          next unless record.trnstype == 'P'
+          next if record.bnum.blank? # Ignore carry forwards
+          
+          count_found += 1
+          
+          deposit = find_or_create_deposit(record.bnum, record.trnsdate)
           if deposit.nil?
-            puts Color.red("  FAIL ") + "Deposit" + Color.red(": Batch not found : #{record.bnum}")
+            display_fail "Deposit", "Batch not found : #{record.bnum}"
             next
           end
           
           # Make a payment...
           person = @people[record.acctnum]
           if person.nil?
-            puts Color.red("  FAIL ") + "Deposit" + Color.red(": Person not found, unable to save payment : #{record.acctnum}")
+            display_fail "Deposit", "Person not found, unable to save payment : #{record.acctnum}"
             next
           end
           
+          # If the amount is positive, create a payment
+          if record.trnsamnt.to_f >= 0
+            payment = Payment.new(
+              legacy_id: "#{person[:legacy_id]}/#{record.trnscdyr}/#{@payments.keys.count}/PP",
+              deposit_id: deposit[:legacy_id],
+              person_id: person[:legacy_id],
+              kind: 'Check',
+              # reference_code: '',
+              payment_amount: record.trnsamnt,
+              allocated_amount: 0.0,
+              note: record.comment.gsub(/"/, "'"),
+              # third_party_id: '',
+              # honor: '',
+              # honoree: '',
+              # notify_id: '',
+              # decline_date: '',
+              # decline_posted: false,
+              # refund_amount: 0
+            )
+            @payments[payment[:legacy_id]] = payment
+          
+            event = @events[Helper::to_legacy_id(record.trnscdyr)]
+          
+            if event.nil?
+              # Only log errors for those after import period
+              unless Helper::to_legacy_year(record.trnscdyr) < @import_start_year
+                display_warn "Allocation", "Event not found, unable to allocate : #{record.trnscdyr}"
+              end
+              next
+            end
+          
+            # Allocate to the attendance billing
+            @allocations << Allocation.new(
+              payment_id: payment[:legacy_id],
+              billing_id: "#{person[:legacy_id]}/#{event[:legacy_id]}/A",
+              allocation_amount: record.trnsamnt
+            )
+            count_created += 1
+          else
+            # The payment amount is negative, reduce the last payment by person, event to this amount
+            # Test to make sure we do not create a negative payment too
+            
+            # Adjust a payment
+            payment_key_part = Regexp.new("^#{person[:legacy_id]}/#{record.trnscdyr}")
+            
+            matches = @payments.keys.select { |v| v =~ payment_key_part }
+            matches.reverse!
+            
+            remaining_amount = record.trnsamnt.to_f.abs
+            # puts "#{person[:legacy_id]}/#{record.trnscdyr} : Start #{remaining_amount}"
+            matches.each do |key|
+              payment = @payments[key]
+              if payment[:payment_amount].to_f >= remaining_amount
+                
+                # puts "#{person[:legacy_id]}/#{record.trnscdyr} : PAYMENT #{payment[:payment_amount].to_f }"
+                
+                allocations_to_delete = @allocations.select { |a| a[:payment_id] == payment[:legacy_id] }
+                billing_id = ''
+                allocations_to_delete.each do |allocation|
+                  billing_id = allocation[:billing_id]
+                  @allocations.delete(allocation)
+                end
+                
+                if billing_id.blank?
+                  display_warn "AdjustP", "No allocation to remove : #{person[:legacy_id]}/#{record.trnscdyr} for amount #{record.trnsamnt}"
+                  break
+                end
+                
+                payment[:payment_amount] = payment[:payment_amount].to_f - remaining_amount
+                # puts "#{person[:legacy_id]}/#{record.trnscdyr} : AFTER #{payment[:payment_amount]}"
+                
+                if payment[:payment_amount].to_f == 0
+                  # puts "#{person[:legacy_id]}/#{record.trnscdyr} : DELETE"
+                  @payments.delete(payment[:legacy_id])
+                else                
+                  # Do a new allocation to replace the deleted one
+                  @allocations << Allocation.new(
+                    payment_id: payment[:legacy_id],
+                    billing_id: billing_id,
+                    allocation_amount: payment[:payment_amount].to_f 
+                  )
+                  # puts "#{person[:legacy_id]}/#{record.trnscdyr} : ALLOCATE #{payment[:payment_amount].to_f}"
+                end
+                
+                count_adjusted += 1
+                remaining_amount = 0 # Its done
+                # puts "#{person[:legacy_id]}/#{record.trnscdyr} : REMAINING #{remaining_amount}"
+                break
+              else
+                # Latest payment is < remaining amount, nuke it and reduce the remaining
+                # puts "#{person[:legacy_id]}/#{record.trnscdyr} : PAYMENT* #{payment[:payment_amount].to_f }"
+                
+                allocations_to_delete = @allocations.select { |a| a[:payment_id] == payment[:legacy_id] }
+                allocations_to_delete.each do |allocation|
+                  @allocations.delete(allocation)
+                end
+                
+                remaining_amount = remaining_amount - payment[:payment_amount].to_f
+                # puts "#{person[:legacy_id]}/#{record.trnscdyr} : DELETE"
+                # puts "#{person[:legacy_id]}/#{record.trnscdyr} : REMAINING #{remaining_amount}"
+                @payments.delete(payment[:legacy_id])
+                count_adjusted += 1
+              end
+            end
+            
+            if remaining_amount > 0
+              display_warn "Deposit", "Not all payments adjusted : #{person[:legacy_id]}/#{record.trnscdyr} for amount #{record.trnsamnt}"
+            end
+          end
+        end
+        display_count({"Found" => count_found, "Created" => count_created, "Adjusted" => count_adjusted})
+      end
+      
+      # -------------------------------------------------------------------------
+
+      def generate_deposit_payment_allocations_for_contributions
+        # Older files...
+        process_year = @import_start_date.year + 1
+        while process_year < Date.today.year
+          extension = Helper::get_f_extension(process_year)
+          generate_for_contributions "Year #{process_year}", "#{@folder.path}/ESRBYTD.#{extension}", process_year
+          process_year += 1
+        end
+        
+        generate_for_contributions "Current YTD", "#{@folder.path}/ESRBYTD.DBF", Date.today.year
+      end
+      
+      def generate_for_contributions(which, file_path, year)
+        display_action "Pass 4", "#{which} Deposits, Payments and Allocations (C)"
+        
+        table = DBF::Table.new(file_path)
+        count_found = 0
+        count_created = 0
+        billing_found = 0
+        billing_created = 0
+        table.each do |record|
+          next if record.nil?
+          next unless record.trnstype == 'C'
+          next if record.trnsamnt.to_f < 0
+          next if record.bnum.blank? # Ignore carry forwards
+          
+          count_found += 1
+          
+          deposit = find_or_create_deposit(record.bnum, record.trnsdate)
+          if deposit.nil?
+            display_fail "Deposit", "Batch not found : #{record.bnum}"
+            next
+          end
+          
+          # Make a payment...
+          person = @people[record.acctnum]
+          if person.nil?
+            display_fail "Deposit", "Person not found, unable to save payment : #{record.acctnum}"
+            next
+          end
+          
+          # Special case in contributions, find the billing, if not create a sonation billing 
+          # to match the amount
+          
+          event = @events[Helper::to_legacy_id(record.trnscdyr)]
+          if event.nil?
+            # Only log errors for those after import period
+            unless Helper::to_legacy_year(record.trnscdyr) < @import_start_year
+              display_warn "Allocation", "Event not found, unable to allocate : #{record.trnscdyr}"
+            end
+            next
+          end
+          
+          billing_key_part = "#{person[:legacy_id]}/#{event[:legacy_id]}"
+          # Try for an attendance first
+          billing = @billings[billing_key_part + "/A"]
+          if billing.nil?
+            # See if we have a donation billing?
+            billing = @billings[billing_key_part + "/D"]
+            if billing.nil?
+              # Make a new donation billing...
+              add_attending(record, false) # In case its not there (does not increment attending count)
+              add_billing(record, 'Donation')
+              billing = @billings[billing_key_part + "/D"]
+              billing_created += 1
+            else
+              # Need to increase the donation billing amount for the next payment...
+              billing[:bill_amount] = billing[:bill_amount].to_f + record.trnsamnt
+              billing[:payable_amount] = billing[:payable_amount].to_f + record.trnsamnt
+              billing_found += 1
+            end
+          else
+            billing_found += 1
+          end
+          
           payment = Payment.new(
-            legacy_id: "#{@payments.keys.count}-P", # "#{deposit[:legacy_id]}/#{person[:legacy_id]}/#{record.trnscdyr}/PP",
-            deposit_legacy_id: deposit[:legacy_id],
-            person_legacy_id: person[:legacy_id],
+            legacy_id: "#{person[:legacy_id]}/#{record.trnscdyr}/#{@payments.keys.count}/PC",
+            deposit_id: deposit[:legacy_id],
+            person_id: person[:legacy_id],
             kind: 'Check',
             # reference_code: '',
             payment_amount: record.trnsamnt,
@@ -979,29 +1298,210 @@ module Kifu
             # refund_amount: 0
           )
           @payments[payment[:legacy_id]] = payment
+                    
+          # Allocate to the attendance billing
+          @allocations << Allocation.new(
+            payment_id: payment[:legacy_id],
+            billing_id: billing[:legacy_id],
+            allocation_amount: record.trnsamnt
+          )
+          count_created += 1
+        end
+        
+        display_count({"Found" => count_found, "Created" => count_created, "Billings" => billing_found, "BCreated" => billing_created})
+      end
+      
+      # -------------------------------------------------------------------------
+
+      def adjust_billings
+        # Older files...
+        process_year = @import_start_date.year + 1
+        while process_year < Date.today.year
+          extension = Helper::get_f_extension(process_year)
+          generate_for_adjustments "Year #{process_year}", "#{@folder.path}/ESRBYTD.#{extension}", process_year
+          process_year += 1
+        end
+        
+        generate_for_adjustments "Current YTD", "#{@folder.path}/ESRBYTD.DBF", Date.today.year
+      end
+      
+      def generate_for_adjustments(which, file_path, year)
+        display_action "Pass 5", "#{which} Adjust Billings (V)"
+        
+        table = DBF::Table.new(file_path)
+        count_found = 0
+        count_adjusted = 0
+        count_deleted = 0
+        table.each do |record|
+          next if record.nil?
+          next unless record.trnstype == 'V'
+          next if record.trnsamnt.to_f > 0
+          next if record.bnum.blank? # Ignore carry forwards
           
-          e_legacy_id = record.trnscdyr.strip
-          e_legacy_id = "0#{e_legacy_id}" if e_legacy_id.length < 4
-          event = @events[e_legacy_id]
+          count_found += 1
           
-          if event.nil?
-            puts Color.cyan("  WARN ") + "Allocation" + Color.cyan(": Event not found, unable to allocate : #{e_legacy_id}")
+          person = @people[record.acctnum]
+          if person.nil?
+            display_fail "Adjustment", "Person not found, unable to save adjustment : #{record.acctnum}"
             next
           end
           
-          @allocations << Allocation.new(
-            payment_legacy_id: payment[:legacy_id],
-            billing_legacy_id: "#{person[:legacy_id]}/#{event[:legacy_id]}/A",
-            allocation_amount: record.trnsamnt
-          )
+          event = @events[Helper::to_legacy_id(record.trnscdyr)]
+          if event.nil?
+            # Only log errors for those after import period
+            unless Helper::to_legacy_year(record.trnscdyr) < @import_start_year
+              display_warn "Adjustment", "Event not found, unable to adjust : #{record.trnscdyr}"
+            end
+            next
+          end
+          
+          # If its a DEBIT, adjust a billing
+          if record.dbcrcode == 'D'
+            # Adjust a billing
+            billing_key_part = "#{person[:legacy_id]}/#{event[:legacy_id]}"
+            # Try for an attendance first
+            billing = @billings[billing_key_part + "/A"]
+            if billing.nil?
+              # See if we have a donation billing?
+              billing = @billings[billing_key_part + "/D"]
+            end
+
+            if billing.nil?
+              display_fail "Adjustment", "No billing to adjust : #{billing_key_part}"
+              next
+            end
+
+            # We have a billing, yay
+            payable = billing[:payable_amount].blank? ? billing[:bill_amount].to_f : billing[:payable_amount].to_f
+            new_payable = payable - record.trnsamnt.to_f.abs
+            
+            if new_payable == 0
+
+              allocations_to_delete = []
+              @allocations.each do |allocation|
+                if allocation[:billing_id] == billing[:legacy_id]
+                  allocations_to_delete << allocation
+                end
+              end
+            
+              allocations_to_delete.each do |allocation|
+                @allocations.delete(allocation)
+              end
+              
+              # Reduce the attending so the bill_for is right
+              attending = @attendings["#{person[:legacy_id]}/#{event[:legacy_id]}"]
+              if attending.present?
+                if attending[:no_of].to_i > 1
+                  attending[:no_of] = attending[:no_of].to_i - 1
+                end
+              end
+              
+              @billings.delete(billing[:legacy_id])
+              count_deleted += 1              
+            else
+              # Its a reduction, not a nuke
+              
+              # Reduce the attending so the bill_for is right
+              attending = @attendings["#{person[:legacy_id]}/#{event[:legacy_id]}"]
+              if attending.present?
+                if attending[:no_of].to_i > 1
+                  attending[:no_of] = attending[:no_of].to_i - 1
+                end
+              end
+              
+              billing[:payable_amount] = new_payable
+              count_adjusted += 1
+            end
+          else
+            # Adjust a payment
+            payment_key_part = Regexp.new("^#{person[:legacy_id]}/#{record.trnscdyr}")
+            
+            matches = @payments.keys.select { |v| v =~ payment_key_part }
+            
+            matched = false
+            matches.each do |key|
+              payment = @payments[key]
+              if payment[:payment_amount].to_f == record.trnsamnt.to_f.abs
+                # puts "NUKE #{person[:legacy_id]} on #{payment[:legacy_id]} for #{record.trnsamnt.to_f}..."
+                
+                allocations_to_delete = @allocations.select { |a| a[:payment_id] == payment[:legacy_id] }
+            
+                allocations_to_delete.each do |allocation|
+                  @allocations.delete(allocation)
+                end
+                
+                @payments.delete(payment[:legacy_id])
+                count_deleted += 1
+                matched = true
+                break
+              end
+            end
+            
+            if matched == false
+              display_warn "Adjustment", "No payment to adjust : #{person[:legacy_id]}/#{record.trnscdyr} for amount #{record.trnsamnt}"
+            end
+          end
+        end
+        display_count({"Found" => count_found, "Adjusted" => count_adjusted, "Deleted" => count_deleted})
+      end
+
+      # -------------------------------------------------------------------------      
+      
+      def generate_reallocations
+        # Older files...
+        process_year = @import_start_date.year + 1
+        while process_year < Date.today.year
+          extension = Helper::get_f_extension(process_year)
+          generate_for_realloc "Year #{process_year}", "#{@folder.path}/ESRBYTD.#{extension}", process_year
+          process_year += 1
+        end
+        
+        generate_for_realloc "Current YTD", "#{@folder.path}/ESRBYTD.DBF", Date.today.year
+      end
+      
+      def generate_for_realloc(which, file_path, year)
+        display_action "Pass 6", "#{which} Reallocations (A)"
+        
+        table = DBF::Table.new(file_path)
+        count_found = 0
+        count_adjusted = 0
+        count_deleted = 0
+        table.each do |record|
+          next if record.nil?
+          next unless record.trnstype == 'A'
+          next if record.trnsamnt.to_f < 0
+          next if record.bnum.blank? # Ignore carry forwards
+          
+          count_found += 1
+          
+          # No idead how to find the matching payment and reallocate
+          # So FAIL
+          person = @people[record.acctnum]
+          if person.nil?
+            display_fail "Realloc", "Person not found, unable to save adjustment : #{record.acctnum}"
+            next
+          end
+          
+          event = @events[Helper::to_legacy_id(record.trnscdyr)]
+          if event.nil?
+            # Only log errors for those after import period
+            unless Helper::to_legacy_year(record.trnscdyr) < @import_start_year
+              display_fail "Realloc", "Event not found, unable to adjust : #{record.trnscdyr}"
+            end
+            next
+          end
+          
+          display_fail "Realloc", "Unable to match payments and reallocate : #{person[:legacy_id]}/#{record.trnscdyr} for amount #{record.trnsamnt}"
         end
       end
       
-      def find_or_create_deposit(batch_code, year)
+      # -------------------------------------------------------------------------
+      
+      def find_or_create_deposit(batch_code, trnsdate)
         return @deposits[batch_code] unless @deposits[batch_code].nil?
         
-        if batch_code.length == 4
-          # Must be a temp_batch
+        if batch_code.length == 4 && batch_code.to_i != 0
+          # Must be a batch that is not in the file, so create one
           batch = @temp_batches[batch_code]
           
           unless batch.nil?
@@ -1014,36 +1514,34 @@ module Kifu
               @deposits[deposit[:legacy_id]] = deposit
               return deposit
             else
-              puts Color.red("  FAIL ") + "Deposit" + Color.red(": #{deposit.errors.join(', ')} : #{deposit[:legacy_id]}")
+              display_fail "Deposit", "#{deposit.errors.join(', ')} : #{deposit[:legacy_id]}"
               return nil
             end
+          else
+            display_fail "Deposit", "Batch not found : #{deposit[:legacy_id]}"
+            return nil            
           end
         end
         
-        # Missing or invalid batch code
-        # Create a series of hack deposits with up to 20 payments each
-        if @internal_batch_count >= 20
-          # Create a new dummy deposit
-          @internal_batch_code += 1
-          legacy_id = "FAKE-#{@internal_batch_code}"
-          legacy_id = "FAKE-000#{@internal_batch_code}" if legacy_id.length == 6
-          legacy_id = "FAKE-00#{@internal_batch_code}" if legacy_id.length == 7
-          legacy_id = "FAKE-0#{@internal_batch_code}" if legacy_id.length == 8
-          deposit = Deposit.new(
-            legacy_id: legacy_id,
-            deposit_date: Date.new(year, @config["company"]["fiscal_year_month"], 1),
-            bank_account_id: @marks["deposit_bank_account_code"]
-          )
-          @deposits[deposit[:legacy_id]] = deposit
-          @internal_batch_count = 0
-        end
+        # Here on the zero codes
+        the_date = Helper::marks_to_iso_date(trnsdate)
+        new_key = "DEP-#{the_date.to_s}"
         
-        legacy_id = "FAKE-#{@internal_batch_code}"
-        legacy_id = "FAKE-000#{@internal_batch_code}" if legacy_id.length == 6
-        legacy_id = "FAKE-00#{@internal_batch_code}" if legacy_id.length == 7
-        legacy_id = "FAKE-0#{@internal_batch_code}" if legacy_id.length == 8
-        @internal_batch_count += 1
-        @deposits[legacy_id]
+        return @deposits[new_key] unless @deposits[new_key].nil?
+        
+        # Ok create it
+        deposit = Deposit.new(
+          legacy_id: new_key,
+          deposit_date: the_date,
+          bank_account_id: @marks["deposit_bank_account_code"]
+        )
+        if deposit.valid?
+          @deposits[deposit[:legacy_id]] = deposit
+          return deposit
+        else
+          display_fail "Deposit", "#{deposit.errors.join(', ')} : #{deposit[:legacy_id]}"
+          return nil
+        end
       end
       
       # -------------------------------------------------------------------------
@@ -1064,7 +1562,7 @@ module Kifu
         write_array_file "emails", @emails, Email.new().header
         
         write_hash_file "events", @events, Event.new().header
-        write_array_file "attendings", @attendings, Attending.new().header
+        write_hash_file "attendings", @attendings, Attending.new().header
         write_hash_file "billings", @billings, Billing.new().header
         write_hash_file "deposits", @deposits, Deposit.new().header
         write_hash_file "payments", @payments, Payment.new().header
@@ -1092,29 +1590,32 @@ module Kifu
       # -------------------------------------------------------------------------
       
       def display_start
-        puts Color.yellow("Marks Import ") + Color.green("Starting...")
-        puts "    Start from: " + Color.green("#{@import_start_date}")
+        display_heading "Starting", "Marks Import"
+        display_item "Start From", @import_start_date
       end
       
       def display_end
-        puts Color.yellow("Marks Import Statistics")
-        puts " Chart Accounts: " + Color.green("#{@chart_accounts.keys.length}")
-        puts "           Tags: " + Color.green("#{@tags.keys.length}")
-        puts "    Occupations: " + Color.green("#{@occupations.keys.length}")
-        puts "         People: " + Color.green("#{@people.keys.length}")
-        puts "  Relationships: " + Color.green("#{@relationships.length}")
-        puts "     Milestones: " + Color.green("#{@person_milestones.length}")
-        puts "    Person Tags: " + Color.green("#{@person_tags.length}")
-        puts "      Addresses: " + Color.green("#{@addresses.length}")
-        puts "         Phones: " + Color.green("#{@phones.length}")
-        puts "         Emails: " + Color.green("#{@emails.length}")
-        puts "         Events: " + Color.green("#{@events.keys.length}")
-        puts "     Attendings: " + Color.green("#{@attendings.length}")
-        puts "       Billings: " + Color.green("#{@billings.keys.length}")
-        puts "       Deposits: " + Color.green("#{@deposits.keys.length}")
-        puts "       Payments: " + Color.green("#{@payments.keys.length}")
-        puts "    Allocations: " + Color.green("#{@allocations.length}")
-        puts Color.yellow("Marks Import ") + Color.green("Done...")
+        display_heading "Statistics", "Marks Import"
+        
+        display_item "Chart Accounts", "#{@chart_accounts.keys.length}"
+        display_item "Tags", "#{@tags.keys.length}"
+        display_item "Occupations", "#{@occupations.keys.length}"
+        display_item "People", "#{@people.keys.length}"
+        display_item "Relationships", "#{@relationships.length}"
+        display_item "Milestones", "#{@person_milestones.length}"
+        display_item "Person Tags", "#{@person_tags.length}"
+        display_item "Addresses", "#{@addresses.length}"
+        display_item "Phones", "#{@phones.length}"
+        display_item "Emails", "#{@emails.length}"
+        display_item "Events", "#{@events.keys.length}"
+        display_item "Attendings", "#{@attendings.keys.length}"
+        display_item "Billings", "#{@billings.keys.length}"
+        display_item "Deposits", "#{@deposits.keys.length}"
+        display_item "Payments", "#{@payments.keys.length}"
+        display_item "Allocations", "#{@allocations.length}"
+        
+        # display_item "Marks Import", "Done"
+        @file.close
       end
       
     end

@@ -6,8 +6,8 @@ module Kifu
             
       def initialize(params = {})
         @model = {
-          person_legacy_id: '',
-          event_legacy_id: '',
+          person_id: '',
+          event_id: '',
           rsvp_status: '',
           acceptance_status: '',
           no_of: 1,
@@ -21,8 +21,8 @@ module Kifu
       def errors
         array = []
 
-        array << "Must have a person" if @model[:person_legacy_id] == ''        
-        array << "Must have an event" if @model[:event_legacy_id] == ''        
+        array << "Must have a person" if @model[:person_id] == ''        
+        array << "Must have an event" if @model[:event_id] == ''        
         
         array
       end

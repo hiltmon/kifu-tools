@@ -6,8 +6,8 @@ require 'json'
 config = {}
 
 config[:import] = {
-  # start_year: 2008, # Implies F09...?????
-  start_year: 2011, # Implies F09...?????
+  start_year: 2008, # Implies F08...?????
+  year_is_at_end_of_period: false, # Larchmont treats the START year as the event year
 }
 
 config[:marks] = {

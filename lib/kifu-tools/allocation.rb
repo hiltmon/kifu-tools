@@ -6,8 +6,8 @@ module Kifu
             
       def initialize(params = {})
         @model = {
-          payment_legacy_id: '',
-          billing_legacy_id: '',
+          payment_id: '',
+          billing_id: '',
           allocation_amount: ''
         }
         @model.merge!(params)
@@ -16,8 +16,8 @@ module Kifu
       def errors
         array = []
 
-        array << "Must have a payment" if @model[:payment_legacy_id] == ''        
-        array << "Must have a billing" if @model[:billing_legacy_id] == ''        
+        array << "Must have a payment" if @model[:payment_id] == ''        
+        array << "Must have a billing" if @model[:billing_id] == ''        
         
         array
       end

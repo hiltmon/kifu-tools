@@ -7,8 +7,8 @@ module Kifu
       def initialize(params = {})
         @model = {
           legacy_id: '',
-          deposit_legacy_id: '',
-          person_legacy_id: '',
+          deposit_id: '',
+          person_id: '',
           kind: '',
           reference_code: '',
           payment_amount: '',
@@ -29,8 +29,8 @@ module Kifu
         array = []
 
         array << "Must have a legacy id" if @model[:legacy_id] == ''
-        array << "Must have a deposit legacy id" if @model[:deposit_legacy_id] == ''
-        array << "Must have a person legacy id" if @model[:person_legacy_id] == ''
+        array << "Must have a deposit id" if @model[:deposit_id] == ''
+        array << "Must have a person id" if @model[:person_id] == ''
         array << "Must have a kind" if @model[:kind] == ''
         array << "Must have a payment amount" if @model[:payment_amount] == ''
         
