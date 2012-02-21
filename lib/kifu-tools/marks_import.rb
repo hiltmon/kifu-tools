@@ -123,6 +123,7 @@ module Kifu
         display_action "Loading", "Chart Accounts"
         
         table = DBF::Table.new("#{@folder.path}/ESRTRCDS.DBF")
+        legacy_id = 1
         table.each do |record|
           next if record.nil?
           
@@ -130,20 +131,26 @@ module Kifu
           @chart_accounts[record.glcode] = ChartAccount.new(
             code: record.glcode,
             name: record.glcode,
-            kind: 'Income'
+            kind: 'Income',
+            legacy_id: legacy_id.to_s
           )
+          legacy_id += 1
 
           @chart_accounts[record.glcode2] = ChartAccount.new(
             code: record.glcode2,
             name: record.glcode2,
-            kind: 'Bank'
+            kind: 'Bank',
+            legacy_id: legacy_id.to_s
           )
+          legacy_id += 1
 
           @chart_accounts[record.glcode3] = ChartAccount.new(
             code: record.glcode3,
             name: record.glcode3,
-            kind: 'Receivable'
+            kind: 'Receivable',
+            legacy_id: legacy_id.to_s
           )
+          legacy_id += 1
         end
         
       end
@@ -758,12 +765,14 @@ module Kifu
           old_legacy_id = ''
           while year_start_date <= Date.today
             special_legacy_id = legacy_id + year.to_s[-2,2]
+            income_account_id = @chart_accounts[record.glcode][:legacy_id]
+            bank_account_id = @chart_accounts[record.glcode2][:legacy_id]
             event = Event.new(
               legacy_id: special_legacy_id,
               name: "#{display_year} - #{Helper::titleize(record.trandesc)}",
               detail: Helper::titleize(record.trandsc2),
-              income_account_id: record.glcode,
-              bank_account_id: record.glcode2,
+              income_account_id: income_account_id,
+              bank_account_id: bank_account_id,
               status: (year_start_date < Date.new(Date.today.year-1, Date.today.month, Date.today.day) ? 'Closed' : 'Open'),
               start_at: year_start_date.to_s,
               end_at: (Date.new(year+1, @config["company"]["fiscal_year_month"], 1) - 1).to_s,
@@ -805,11 +814,13 @@ module Kifu
           old_legacy_id = ''
           while year_start_date <= Date.today
             special_legacy_id = legacy_id + year.to_s[-2,2]
+            income_account_id = @chart_accounts[@marks["tribute_income_account_code"]][:legacy_id]
+            bank_account_id = @chart_accounts[@marks["tribute_bank_account_code"]][:legacy_id]
             event = Event.new(
               legacy_id: special_legacy_id,
               name: "#{display_year} - #{Helper::titleize(record.ceventdsc)}",
-              income_account_id: @marks["tribute_income_account_code"],
-              bank_account_id: @marks["tribute_bank_account_code"],
+              income_account_id: income_account_id,
+              bank_account_id: bank_account_id,
               status: (year_start_date < Date.new(Date.today.year-1, Date.today.month, Date.today.day) ? 'Closed' : 'Open'),
               start_at: year_start_date.to_s,
               end_at: (Date.new(year+1, @config["company"]["fiscal_year_month"], 1) - 1).to_s,
@@ -1505,10 +1516,11 @@ module Kifu
           batch = @temp_batches[batch_code]
           
           unless batch.nil?
+            bank_account_id = @chart_accounts[@marks["deposit_bank_account_code"]][:legacy_id]
             deposit = Deposit.new(
               legacy_id: batch[:legacy_id],
               deposit_date: batch[:batch_date],
-              bank_account_id: @marks["deposit_bank_account_code"]
+              bank_account_id: bank_account_id
             )
             if deposit.valid?
               @deposits[deposit[:legacy_id]] = deposit
@@ -1530,10 +1542,11 @@ module Kifu
         return @deposits[new_key] unless @deposits[new_key].nil?
         
         # Ok create it
+        bank_account_id = @chart_accounts[@marks["deposit_bank_account_code"]][:legacy_id]
         deposit = Deposit.new(
           legacy_id: new_key,
           deposit_date: the_date,
-          bank_account_id: @marks["deposit_bank_account_code"]
+          bank_account_id: bank_account_id
         )
         if deposit.valid?
           @deposits[deposit[:legacy_id]] = deposit
