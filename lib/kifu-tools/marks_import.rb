@@ -877,7 +877,7 @@ module Kifu
           
           count_found += 1
           
-          result = add_attending(record, true)
+          result = add_attending(record, true, true) # Increment and set event fee
           
           count_created += 1 if result == 1
           count_dups += 1 if result == 0
@@ -885,7 +885,7 @@ module Kifu
         display_count({"Found" => count_found, "Created" => count_created, "Dups" => count_dups})
       end
       
-      def add_attending(record, increment)
+      def add_attending(record, increment, set_event = false)
         person = @people[record.acctnum]
         event = @events[Helper::to_legacy_id(record.trnscdyr)]
           
@@ -897,12 +897,15 @@ module Kifu
               event_id: event[:legacy_id]
             )
             
-            # And set the event billing amount
-            if event[:regular_attendance_fee].blank?
-              event[:regular_attendance_fee] = record.trnsamnt
-            else
-              event[:regular_attendance_fee] = [event[:regular_attendance_fee], record.trnsamnt].max
-            end            
+            # Only set the event fee for attendings (B records)
+            if set_event == true
+              # And set the event billing amount
+              if event[:regular_attendance_fee].blank?
+                event[:regular_attendance_fee] = record.trnsamnt
+              else
+                event[:regular_attendance_fee] = [event[:regular_attendance_fee], record.trnsamnt].max
+              end
+            end
           
             return 1
           else
@@ -1277,7 +1280,7 @@ module Kifu
             billing = @billings[billing_key_part + "/D"]
             if billing.nil?
               # Make a new donation billing...
-              add_attending(record, false) # In case its not there (does not increment attending count)
+              add_attending(record, false) # In case its not there (does not increment attending count, does not set event attending fee)
               add_billing(record, 'Donation')
               billing = @billings[billing_key_part + "/D"]
               billing_created += 1
