@@ -52,8 +52,8 @@ module Kifu
         generate_occupation_file
         generate_people_file
         generate_email_file
-        add_memorials_to_people
-        add_children_to_people
+        add_memorials_to_people unless @config["import"]["load_memorials"] == false
+        add_children_to_people unless @config["import"]["load_children"] == false
         add_business_to_people
         add_more_tags_to_people
         
@@ -762,6 +762,14 @@ module Kifu
           display_end = @config["import"]["year_is_at_end_of_period"]
           display_year = (display_end.nil? ? year + 1 : (display_end ? year + 1 : year))
           year_start_date = Date.new(year, @config["company"]["fiscal_year_month"], 1)
+          
+          # If no history, go back 1 year
+          if year_start_date > Date.today
+            year = year - 1
+            display_year = (display_end.nil? ? year + 1 : (display_end ? year + 1 : year))
+            year_start_date = Date.new(year, @config["company"]["fiscal_year_month"], 1)
+          end
+          
           old_legacy_id = ''
           while year_start_date <= Date.today
             special_legacy_id = legacy_id + year.to_s[-2,2]
