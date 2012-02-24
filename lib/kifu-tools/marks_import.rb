@@ -968,15 +968,6 @@ module Kifu
           count_found += 1
           
           if add_billing(record, 'Attendance') == 1
-            # event = @events[Helper::to_legacy_id(record.trnscdyr)]
-            # 
-            # # And set the event billing amount
-            # if event[:regular_attendance_fee].blank?
-            #   event[:regular_attendance_fee] = record.trnsamnt
-            # else
-            #   event[:regular_attendance_fee] = [event[:regular_attendance_fee], record.trnsamnt].max
-            # end
-            
             count_created += 1
           end
         end
@@ -997,38 +988,31 @@ module Kifu
           attending = @attendings[key_part]
           display_warn("Billing", "No attending for #{key_part}.") if attending.nil?
           
-          billing = Billing.new(
-            legacy_id: "#{key_part}/#{extend_part}",
-            person_id: person[:legacy_id],
-            event_id: event[:legacy_id],
-            bill_date: Helper::marks_to_iso_date(record.trnsdate),
-            bill_for: kind,
-            bill_amount: record.trnsamnt,
-            payable_amount: record.trnsamnt
-          )
+          # See if billed before, if so, add to the billing numbers
+          legacy_id = "#{key_part}/#{extend_part}"
+          if @billings[legacy_id].present?
+            # Add to the billable and payable
+            old_billing = @billings[legacy_id]
+            old_billing[:bill_amount] = old_billing[:bill_amount].to_f + record.trnsamnt
+            old_billing[:payable_amount] = old_billing[:payable_amount].to_f + record.trnsamnt
+          else          
+            billing = Billing.new(
+              legacy_id: legacy_id,
+              person_id: person[:legacy_id],
+              event_id: event[:legacy_id],
+              bill_date: Helper::marks_to_iso_date(record.trnsdate),
+              bill_for: kind,
+              bill_amount: record.trnsamnt,
+              payable_amount: record.trnsamnt
+            )
             
-          if billing.valid?
-            # Ignore double billings as the attendance hack applies on import
-            # Unless the amount differs
-            if @billings[billing[:legacy_id]].present?
-              old_billing = @billings[billing[:legacy_id]]
-              
-              if old_billing[:bill_amount] != billing[:bill_amount]
-                # Its an adjustment?
-                billing[:bill_amount] = billing[:bill_amount].to_f + old_billing[:bill_amount].to_f
-                billing[:payable_amount] = billing[:payable_amount].to_f + old_billing[:payable_amount].to_f
-                display_warn("Billing", "Looks like billing is being adjusted, not duplicated #{key_part}.") if attending.nil?
-              else
-                billing[:payable_amount] = billing[:payable_amount].to_f + old_billing[:payable_amount].to_f
-              end
+            if billing.valid?
+              @billings[legacy_id] = billing
+              return 1
+            else
+              display_warn "Billing", "#{billing.errors.join(', ')} : #{billing[:legacy_id]}"
+              return 0
             end
-            
-            # puts Color.red("Double Billing? #{billing[:legacy_id]}") if @billings[billing[:legacy_id]].present?
-            @billings[billing[:legacy_id]] = billing
-            return 1
-          else
-            display_warn "Billing", "#{billing.errors.join(', ')} : #{billing[:legacy_id]}"
-            return 0
           end
         end
         
