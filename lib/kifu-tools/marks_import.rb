@@ -16,6 +16,13 @@ module Kifu
         @file = File.new("#{dest}/log.markdown", "w")
         @config = JSON.parse(IO.read(config))
         
+        begin
+          @trigger_date = Date.new(Date.today.year-1, Date.today.month, Date.today.day)
+        rescue
+          # For Feb 29th
+          @trigger_date = Date.new(Date.today.year-1, Date.today.month, Date.today.day - 1)
+        end
+        
         @import_start_year = @config["import"]["start_year"].to_i
         @import_start_date = Date.new(@import_start_year, @config["company"]["fiscal_year_month"], 1)  
         @marks = @config["marks"]
@@ -781,7 +788,7 @@ module Kifu
               detail: Helper::titleize(record.trandsc2),
               income_account_id: income_account_id,
               bank_account_id: bank_account_id,
-              status: (year_start_date < Date.new(Date.today.year-1, Date.today.month, Date.today.day) ? 'Closed' : 'Open'),
+              status: (year_start_date < @trigger_date ? 'Closed' : 'Open'),
               start_at: year_start_date.to_s,
               end_at: (Date.new(year+1, @config["company"]["fiscal_year_month"], 1) - 1).to_s,
               old_event_id: old_legacy_id
@@ -829,7 +836,7 @@ module Kifu
               name: "#{display_year} - #{Helper::titleize(record.ceventdsc)}",
               income_account_id: income_account_id,
               bank_account_id: bank_account_id,
-              status: (year_start_date < Date.new(Date.today.year-1, Date.today.month, Date.today.day) ? 'Closed' : 'Open'),
+              status: (year_start_date < @trigger_date ? 'Closed' : 'Open'),
               start_at: year_start_date.to_s,
               end_at: (Date.new(year+1, @config["company"]["fiscal_year_month"], 1) - 1).to_s,
               old_event_id: old_legacy_id
