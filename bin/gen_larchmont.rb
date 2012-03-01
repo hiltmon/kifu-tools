@@ -8,8 +8,8 @@ config = {}
 config[:import] = {
   start_year: 2008, # Implies F08...?????
   year_is_at_end_of_period: false, # Larchmont treats the START year as the event year
-  load_memorials: false, # To speed testing up (may not be NIL)
-  load_children: false, # To speed testing up (may not be NIL)
+  load_memorials: true, # To speed testing up (may not be NIL)
+  load_children: true, # To speed testing up (may not be NIL)
 }
 
 config[:marks] = {
