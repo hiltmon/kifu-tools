@@ -27,6 +27,22 @@ module Kifu
         Date.new(yyyy.to_i, mm.to_i, dd.to_i).to_s
       end
       
+      def self.to_legacy_id(trnscdyr)
+        legacy_id = trnscdyr.strip
+        legacy_id = "0#{legacy_id}" if legacy_id.length < 4
+        legacy_id
+      end
+
+      def self.to_legacy_year(trnscdyr)
+        code = trnscdyr.strip
+        yy = code[-2,2]
+        
+        yyyy = "20" + yy
+        yyyy = "19" + yy if yy.to_i > 50
+        
+        yyyy.to_i
+      end
+      
       def self.get_f_extension(year)
         if year >= 2000
           year = year - 2000
