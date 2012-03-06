@@ -25,18 +25,41 @@ config[:company] = {
   subdomain: 'larchmont',
   name: 'Larchmont Temple',
   fiscal_year_month: 7,
-  email: 'email@larchmont.dev'
+  email: 'contact@larchmonttemple.org',
+  phone: '914-834-6120',
+  fax: '914-834-6503',
+  street: '75 Larchmont Ave',
+  city: 'Larchmont',
+  state: 'NY',
+  post_code: '10538'
 }
 
 config[:users] = [
   {
     name: 'admin',
-    email: 'admin@larchmont.dev',
+    email: 'hiltmon@shukaico.com',
     subdomain: 'larchmont',
     password: 'admin00',
     password_confirmation: 'admin00',
     role: 'Admin'
   },
+  {
+    name: 'marcelline',
+    email: 'marcell@larchmonttemple.org',
+    subdomain: 'larchmont',
+    password: 'marcelline00',
+    password_confirmation: 'marcelline00',
+    role: 'Admin'
+  },
+  {
+    name: 'alexis',
+    email: 'alexis@shukaico.com',
+    subdomain: 'larchmont',
+    password: 'alexis00',
+    password_confirmation: 'alexis00',
+    role: 'Admin'
+  },
+  
 ]
 
 # Membership codes are: B,F,I,H,A,R,S,M,,P,N,Z,,,\,D
