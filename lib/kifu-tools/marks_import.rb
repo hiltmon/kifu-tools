@@ -238,7 +238,7 @@ module Kifu
             @person_milestones << PersonMilestone.new(
               person_id: person[:legacy_id],
               milestone_id: 1,
-              on: record.birth1
+              milestone_date: record.birth1
             )
           end
           
@@ -311,7 +311,7 @@ module Kifu
             @person_milestones << PersonMilestone.new(
               person_id: spouse[:legacy_id],
               milestone_id: 1,
-              on: record.birth2
+              milestone_date: record.birth2
             )
           end
           
@@ -319,12 +319,12 @@ module Kifu
             @person_milestones << PersonMilestone.new(
               person_id: person[:legacy_id],
               milestone_id: 5,
-              on: record.anniv
+              milestone_date: record.anniv
             )            
             @person_milestones << PersonMilestone.new(
               person_id: spouse[:legacy_id],
               milestone_id: 5,
-              on: record.anniv
+              milestone_date: record.anniv
             )            
           end
         else
@@ -437,7 +437,7 @@ module Kifu
               @person_milestones << PersonMilestone.new(
                 person_id: relative[:legacy_id],
                 milestone_id: 2,
-                on: memorial_person[:death_date]
+                milestone_date: memorial_person[:death_date]
               )
             else
               display_warn "Person", "#{relative.errors.join(', ')} : #{relative.description}"
@@ -615,7 +615,7 @@ module Kifu
               @person_milestones << PersonMilestone.new(
                 person_id: child[:legacy_id],
                 milestone_id: 1,
-                on: record.bday
+                milestone_date: record.bday
               )
             end
             
@@ -623,7 +623,7 @@ module Kifu
               @person_milestones << PersonMilestone.new(
                 person_id: child[:legacy_id],
                 milestone_id: 7,
-                on: record.bmdate
+                milestone_date: record.bmdate
               )
             end
             
@@ -1406,6 +1406,11 @@ module Kifu
               if attending.present?
                 if attending[:no_of].to_i > 1
                   attending[:no_of] = attending[:no_of].to_i - 1
+                else
+                  # Payable is zero, since all events are manual
+                  # Remove the attendee
+                  # puts "STOP #{person[:legacy_id]}/#{event[:legacy_id]} for #{record.trnsamnt}"
+                  @attendings.delete("#{person[:legacy_id]}/#{event[:legacy_id]}")
                 end
               end
               

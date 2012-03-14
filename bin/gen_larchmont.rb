@@ -31,7 +31,8 @@ config[:company] = {
   street: '75 Larchmont Ave',
   city: 'Larchmont',
   state: 'NY',
-  post_code: '10538'
+  post_code: '10538',
+  show_legacy: true
 }
 
 config[:users] = [

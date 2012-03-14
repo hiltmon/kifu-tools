@@ -17,7 +17,7 @@ module Kifu
         @model = {
           person_id: '',
           milestone_id: '',
-          on: '',
+          milestone_date: '',
           after_sunset: false
         }
         @model.merge!(params)
@@ -26,7 +26,7 @@ module Kifu
       def errors
         array = []
         array << "Must have a milestone id" if @model[:milestone_id] == ''
-        array << "Must have a date" if @model[:on] == ''
+        array << "Must have a milestone_date" if @model[:milestone_date] == ''
         
         array
       end
