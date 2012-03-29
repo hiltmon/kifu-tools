@@ -9,7 +9,8 @@ module Kifu
           name: '',
           category: '',
           legacy_id: '',
-          implies: false,
+          membership: false,
+          solicitor: false,
           hidden: false
         }
         @model.merge!(params)

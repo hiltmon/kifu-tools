@@ -65,18 +65,18 @@ config[:users] = [
 
 # Membership codes are: B,F,I,H,A,R,S,M,,P,N,Z,,,\,D
 config[:tags] = {
-  'B' => {name: 'Non Resident Member', implies: true},
-  'F' => {name: 'Full Family Member', implies: true},
-  'I' => {name: 'Individiual Member', implies: true},
-  'H' => {name: 'Honorary Member', implies: true},
-  'A' => {name: 'Adjusted Member', implies: true},
-  'R' => {name: 'Religious School Member', implies: true},
-  'S' => {name: 'Single Member', implies: true},
-  'M' => {name: 'M-Member', implies: true},
-  'P' => {name: 'P-Member', implies: true},
-  'N' => {name: 'No Billing Member', implies: true},
-  'Z' => {name: 'Z-Member', implies: true},
-  'D' => {name: 'D-Member', implies: true}
+  'B' => {name: 'Non Resident Member', membership: true},
+  'F' => {name: 'Full Family Member', membership: true},
+  'I' => {name: 'Individiual Member', membership: true},
+  'H' => {name: 'Honorary Member', membership: true},
+  'A' => {name: 'Adjusted Member', membership: true},
+  'R' => {name: 'Religious School Member', membership: true},
+  'S' => {name: 'Single Member', membership: true},
+  'M' => {name: 'M-Member', membership: true},
+  'P' => {name: 'P-Member', membership: true},
+  'N' => {name: 'No Billing Member', membership: true},
+  'Z' => {name: 'Z-Member', membership: true},
+  'D' => {name: 'D-Member', membership: true}
 }
 
 path = File.expand_path('../../config/larchmont.json', __FILE__)

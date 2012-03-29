@@ -172,7 +172,7 @@ module Kifu
             @tags[key] = Tag.new(
               legacy_id: key,
               name: value["name"],
-              implies: value["implies"]
+              membership: value["membership"]
             )
           end
         end
@@ -184,7 +184,7 @@ module Kifu
           @tags[record.group] = Tag.new(
             legacy_id: record.group,
             name: record.groupnme,
-            implies: false
+            membership: false
           )
         end
         
